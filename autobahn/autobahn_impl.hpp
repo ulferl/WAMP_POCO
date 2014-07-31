@@ -17,6 +17,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "util/Continuation.h"
+#include "util/make_unique.h"
 
 #include <stdlib.h>
 
@@ -377,7 +378,7 @@ namespace autobahn {
 
         auto eptr = std::make_exception_ptr(server_error(msg[4].toString()));
 
-        switch (static_cast<int>(msg[1]))
+        switch (static_cast<msg_code>(static_cast<int>(msg[1])))
         {
         case msg_code::REGISTER:
         {
@@ -403,7 +404,7 @@ namespace autobahn {
             }
         }
             break;
-        // TODO: INVOCATION, UNREGISTER, PUBLISH, UNSUBSCRIBE
+            // TODO: INVOCATION, UNREGISTER, PUBLISH, UNSUBSCRIBE
         }
     }
 
