@@ -18,6 +18,11 @@
 
 #include "util/Continuation.h"
 #include "util/make_unique.h"
+#include "util/SHA256Engine.h"
+
+#include "Poco/PBKDF2Engine.h"
+#include "Poco/HMACEngine.h"
+#include "Poco/Base64Encoder.h"
 
 #include <stdlib.h>
 
@@ -31,14 +36,6 @@
 
 
 namespace autobahn {
-
-    session::session(bool debug)
-        : m_debug(debug),
-        m_stopped(true),
-        m_session_id(0),
-        m_request_id(0)
-    {
-    }
 
     bool session::start(const Poco::Net::SocketAddress& addr) {
 
@@ -75,7 +72,7 @@ namespace autobahn {
     }
 
 
-    std::future<uint64_t> session::join(const std::string& realm) {
+    std::future<uint64_t> session::join(const std::string& realm, const std::string& method, const std::string& authid, const std::string& signature) {
 
         // [HELLO, Realm|uri, Details|dict]
 
@@ -91,6 +88,16 @@ namespace autobahn {
 
         Poco::JSON::Object details;
         details.set("roles", roles);
+
+        if (method != "")
+        {
+            Poco::JSON::Array methods;
+            methods.add(method);
+            details.set("authmethods", methods);
+            details.set("authid", authid);
+            m_signature = signature;
+        }
+
         json.add(details);
 
         writeJson(json);
@@ -370,6 +377,60 @@ namespace autobahn {
     }
 
 
+    void session::process_challenge(const wamp_msg_t& msg)
+    {
+        // [CHALLENGE, AuthMethod|string, Extra|dict]
+
+        // [AUTHENTICATE, Signature|string, Extra|dict]
+        Poco::JSON::Array json;
+        json.add(static_cast<int>(msg_code::AUTHENTICATE));
+
+        std::string method = msg[1];
+        if (method == "wampcra")
+        {
+            anymap extra = msg[2].extract<anymap>();
+
+            std::string salt = extra["salt"];
+            int iterations = extra["iterations"];
+            std::string challenge = extra["challenge"];
+
+            // derive a key
+            Poco::PBKDF2Engine<Poco::HMACEngine<util::SHA256Engine>> pbkdf2(salt, iterations);
+            pbkdf2.update(m_signature);
+            auto key = pbkdf2.digest();
+
+            std::stringstream ssKey;
+            Poco::Base64Encoder encoderKey(ssKey);
+            for (auto c : key)
+                encoderKey << c;
+            encoderKey.close();
+
+            // sign
+            Poco::HMACEngine<util::SHA256Engine> hmac(ssKey.str());
+            hmac.update(challenge);
+            auto signature = hmac.digest();
+
+            std::stringstream ssSig;
+            Poco::Base64Encoder encoderSig(ssSig);
+            for (auto c : signature)
+                encoderSig << c;
+            encoderSig.close();
+
+            json.add(ssSig.str());
+
+        } else if (method == "ticket")
+        {
+            json.add(m_signature);
+        } else {
+            throw protocol_error("unable to respond to auth method");
+        }
+
+        json.add(Poco::JSON::Object());
+        writeJson(json);
+        send();
+    }
+
+
     void session::process_error(const wamp_msg_t& msg) {
 
         // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri]
@@ -527,9 +588,7 @@ namespace autobahn {
 
                 if ((endpoint->second).type() == typeid(endpoint_t)) {
 
-                    if (m_debug) {
-                        std::cerr << "Invoking endpoint registered under " << registration_id << " as of type endpoint_t" << std::endl;
-                    }
+                    poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_t", registration_id);
 
                     any res = endpoint->second.extract<endpoint_t>()(args, kwargs);
 
@@ -545,9 +604,7 @@ namespace autobahn {
 
                 } else if ((endpoint->second).type() == typeid(endpoint_v_t)) {
 
-                    if (m_debug) {
-                        std::cerr << "Invoking endpoint registered under " << registration_id << " as of type endpoint_v_t" << std::endl;
-                    }
+                    poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_v_t", registration_id);
 
                     anyvec res = endpoint->second.extract<endpoint_v_t>()(args, kwargs);
 
@@ -561,9 +618,7 @@ namespace autobahn {
 
                 } else if ((endpoint->second).type() == typeid(endpoint_fvm_t)) {
 
-                    if (m_debug) {
-                        std::cerr << "Invoking endpoint registered under " << registration_id << " as of type endpoint_fvm_t" << std::endl;
-                    }
+                    poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_fvm_t", registration_id);
 
                     auto f_res = endpoint->second.extract<endpoint_fvm_t>()(args, kwargs);
 
@@ -585,14 +640,12 @@ namespace autobahn {
 
                 } else {
                     // FIXME
-                    std::cerr << "FIX ME INVOCATION " << std::endl;
-                    std::cerr << typeid(endpoint_t).name() << std::endl;
-                    std::cerr << ((endpoint->second).type()).name() << std::endl;
+                    poco_error(m_logger, "not implemented");
                 }
 
             } catch (...) {
                 // FIXME: send ERROR
-                std::cerr << "INVOCATION failed" << std::endl;
+                poco_error(m_logger, "INVOCATION failed");
             }
 
         } else {
@@ -743,18 +796,14 @@ namespace autobahn {
                 (handler->second)(args, kwargs);
 
             } catch (...) {
-                if (m_debug) {
-                    std::cerr << "Warning: event handler fired exception" << std::endl;
-                }
+                poco_warning(m_logger, "event handler fired exception");
             }
 
         } else {
             // silently swallow EVENT for non-existent subscription IDs.
             // We may have just unsubscribed, the this EVENT might be have
             // already been in-flight.
-            if (m_debug) {
-                std::cerr << "Skipping EVENT for non-existent subscription ID " << subscription_id << std::endl;
-            }
+            poco_trace_f1(m_logger, "Skipping EVENT for non-existent subscription ID %?i", subscription_id);
         }
     }
 
@@ -824,7 +873,8 @@ namespace autobahn {
             break;
 
         case msg_code::CHALLENGE:
-            throw protocol_error("received CHALLENGE message - not implemented");
+            process_challenge(msg);
+            break;
 
         case msg_code::AUTHENTICATE:
             throw protocol_error("received AUTHENTICATE message unexpected for WAMP client roles");
@@ -906,19 +956,7 @@ namespace autobahn {
     void session::send() {
 
         if (!m_stopped) {
-            if (m_debug) {
-                std::cerr << "TX message" << std::endl;
-            }
-
             m_ws->sendFrame(m_sendBuffer, m_sendSize);
-
-            if (m_debug) {
-                std::cerr << "TX message sent" << std::endl;
-            }
-        } else {
-            if (m_debug) {
-                std::cerr << "TX message skipped since session stopped" << std::endl;
-            }
         }
     }
 
@@ -932,7 +970,14 @@ namespace autobahn {
                     break;
 
                 got_msg();
-            } catch (Poco::Exception&) {
+            } catch (Poco::Exception& e) {
+                poco_error(m_logger, e.displayText().c_str());
+                break;
+            } catch (protocol_error& e) {
+                poco_error(m_logger, e.what());
+                break;
+            } catch (...) {
+                poco_error(m_logger, "unexpected exception");
                 break;
             }
         }

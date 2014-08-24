@@ -38,6 +38,7 @@
 #include <Poco/JSON/Parser.h>
 #include <Poco/JSON/Stringifier.h>
 #include <Poco/Dynamic/Var.h>
+#include <Poco/Logger.h>
 
 // thank you microsoft
 #ifdef ERROR
@@ -132,14 +133,6 @@ namespace autobahn {
     public:
 
         /*!
-        * Create a new WAMP session.
-        *
-        * \param in The input stream to run this session on.
-        * \param out The output stream to run this session on.
-        */
-        inline session(bool debug = false);
-
-        /*!
         * Start listening on the IStream provided to the constructor
         * of this session.
         */
@@ -157,10 +150,13 @@ namespace autobahn {
         * Join a realm with this session.
         *
         * \param realm The realm to join on the WAMP router connected to.
+        * \param method The method used for login. Empty string will cause no login.
+        * \param authid The authid to login with.
+        * \param signature The signature to use when logging in. For method "ticket" the ticket, for method "wampcra" the passphrase.
         * \return A future that resolves with the session ID when the realm was joined.
         */
         inline
-            std::future<uint64_t> join(const std::string& realm);
+            std::future<uint64_t> join(const std::string& realm, const std::string& method = "", const std::string& authid = "", const std::string& signature = "");
 
         /*!
         * Leave the realm.
@@ -354,6 +350,9 @@ namespace autobahn {
         /// Process a WAMP ABORT message.
         inline void process_abort(const wamp_msg_t& msg);
 
+        /// Process a WAMP CHALLENGE message.
+        inline void process_challenge(const wamp_msg_t& msg);
+
         /// Process a WAMP ERROR message.
         inline void process_error(const wamp_msg_t& msg);
 
@@ -391,36 +390,36 @@ namespace autobahn {
         inline void got_msg();
 
 
-        bool m_debug;
+        Poco::Logger& m_logger = Poco::Logger::get("autobahn");
 
-        bool m_stopped;
+        bool m_stopped = true;
 
         std::unique_ptr<Poco::Net::HTTPClientSession> m_httpsession;
         std::unique_ptr<Poco::Net::WebSocket> m_ws;
         std::thread m_runThread;
 
 
-        std::promise<any> m_test_promise;
-
-
         char m_recvBuffer[BUFFER_SIZE];
-        int m_recvSize;
+        int m_recvSize = 0;
         char m_sendBuffer[BUFFER_SIZE];
-        int m_sendSize;
+        int m_sendSize = 0;
 
         Poco::JSON::Parser m_parser;
 
         /// WAMP session ID (if the session is joined to a realm).
-        uint64_t m_session_id;
+        uint64_t m_session_id = 0;
 
         /// Future to be fired when session was joined.
         std::promise<uint64_t> m_session_join;
 
         /// Last request ID of outgoing WAMP requests.
-        uint64_t m_request_id;
+        uint64_t m_request_id = 0;
+
+        /// Signature to be used to authenticate
+        std::string m_signature;
 
 
-        bool m_goodbye_sent;
+        bool m_goodbye_sent = false;
 
         std::promise<std::string> m_session_leave;
 
