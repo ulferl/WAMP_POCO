@@ -34,6 +34,8 @@
 #include <Poco/Net/HTTPClientSession.h>
 #include <Poco/Net/HTTPRequest.h>
 #include <Poco/Net/HTTPResponse.h>
+#include <Poco/Net/HTTPSClientSession.h>
+#include <Poco/Net/Context.h>
 #include <Poco/Net/WebSocket.h>
 #include <Poco/JSON/Parser.h>
 #include <Poco/JSON/Stringifier.h>
@@ -124,6 +126,14 @@ namespace autobahn {
         uint64_t id;
     };
 
+    /// Represents the authentication information sent on welcome
+    struct authinfo {
+        std::string authmethod;
+        std::string authprovider;
+        std::string authid;
+        std::string authrole;
+    };
+
 
     /*!
     * A WAMP session.
@@ -131,6 +141,9 @@ namespace autobahn {
     class session {
 
     public:
+
+        inline
+            ~session();
 
         /*!
         * Start listening on the IStream provided to the constructor
@@ -145,6 +158,9 @@ namespace autobahn {
         */
         inline
             void stop();
+
+        inline
+            bool isConnected() const;
 
         /*!
         * Join a realm with this session.
@@ -166,6 +182,10 @@ namespace autobahn {
         */
         inline
             std::future<std::string> leave(const std::string& reason = std::string("wamp.error.close_realm"));
+
+
+        inline
+            authinfo getAuthInfo() const;
 
 
         /*!
@@ -380,6 +400,8 @@ namespace autobahn {
         template <typename T>
         inline void writeJson(const T& objOrArray);
 
+        inline void dbg_buffers();
+
         /// Send out message serialized in serialization buffer to ostream.
         inline void send();
 
@@ -417,6 +439,9 @@ namespace autobahn {
 
         /// Signature to be used to authenticate
         std::string m_signature;
+
+        /// Authentication information sent on welcome
+        authinfo m_authinfo;
 
 
         bool m_goodbye_sent = false;

@@ -35,7 +35,29 @@
 #include <sstream>
 
 
+static Poco::JSON::Array DynToJSON(const Poco::Dynamic::Array& dynamic)
+{
+    Poco::JSON::Array arr;
+    for (const auto& i : dynamic)
+        arr.add(i);
+    return arr;
+}
+
+static Poco::JSON::Object DynToJSON(const Poco::DynamicStruct& dynamic)
+{
+    Poco::JSON::Object obj;
+    for (const auto& i : dynamic)
+        obj.set(i.first, i.second);
+    return obj;
+}
+
+
 namespace autobahn {
+
+    session::~session() {
+
+        stop();
+    }
 
     bool session::start(const Poco::Net::SocketAddress& addr) {
 
@@ -47,7 +69,11 @@ namespace autobahn {
 
             request.add("Sec-WebSocket-Protocol", "wamp.2.json");
 
-            m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
+            // TODO make configurable
+            //m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
+
+            Poco::Net::Context::Ptr ctx = new Poco::Net::Context(Poco::Net::Context::CLIENT_USE, "", Poco::Net::Context::VERIFY_NONE, 9, true);
+            m_httpsession = std::make_unique<Poco::Net::HTTPSClientSession>(addr.host().toString(), addr.port(), ctx);
             m_ws = std::make_unique<Poco::Net::WebSocket>(*m_httpsession, request, response);
             m_ws->setReceiveTimeout(0);
 
@@ -56,7 +82,7 @@ namespace autobahn {
         }
 
         m_stopped = false;
-        m_runThread = std::thread(std::bind(&session::run, this));
+        m_runThread = std::thread([this]{ run(); });
         return true;
     }
 
@@ -69,6 +95,12 @@ namespace autobahn {
                 m_ws->shutdown();
             m_runThread.join();
         }
+    }
+
+
+    bool session::isConnected() const
+    {
+        return !m_stopped;
     }
 
 
@@ -103,7 +135,13 @@ namespace autobahn {
         writeJson(json);
         send();
 
+        m_session_join = decltype(m_session_join)();
         return m_session_join.get_future();
+    }
+
+
+    authinfo session::getAuthInfo() const {
+        return m_authinfo;
     }
 
 
@@ -233,7 +271,7 @@ namespace autobahn {
             json.add(m_request_id);
             json.add(Poco::JSON::Object());
             json.add(topic);
-            json.add(args);
+            json.add(DynToJSON(args));
             writeJson(json);
             send();
 
@@ -261,8 +299,8 @@ namespace autobahn {
             json.add(m_request_id);
             json.add(Poco::JSON::Object());
             json.add(topic);
-            json.add(args);
-            json.add(kwargs);
+            json.add(DynToJSON(args));
+            json.add(DynToJSON(kwargs));
             writeJson(json);
             send();
 
@@ -314,7 +352,7 @@ namespace autobahn {
             json.add(m_request_id);
             json.add(Poco::JSON::Object());
             json.add(procedure);
-            json.add(args);
+            json.add(DynToJSON(args));
             writeJson(json);
             send();
 
@@ -345,8 +383,8 @@ namespace autobahn {
             json.add(m_request_id);
             json.add(Poco::JSON::Object());
             json.add(procedure);
-            json.add(args);
-            json.add(kwargs);
+            json.add(DynToJSON(args));
+            json.add(DynToJSON(kwargs));
             writeJson(json);
             send();
 
@@ -364,6 +402,17 @@ namespace autobahn {
         // [WELCOME, Session|id, Details|dict]
 
         m_session_id = msg[1];
+
+        anymap details = msg[2].extract<anymap>();
+        if (details.contains("authmethod"))
+            m_authinfo.authmethod = details["authmethod"].toString();
+        if (details.contains("authprovider"))
+            m_authinfo.authprovider = details["authprovider"].toString();
+        if (details.contains("authid"))
+            m_authinfo.authid = details["authid"].toString();
+        if (details.contains("authrole"))
+            m_authinfo.authrole = details["authrole"].toString();
+
         m_session_join.set_value(m_session_id);
     }
 
@@ -424,6 +473,9 @@ namespace autobahn {
         } else {
             throw protocol_error("unable to respond to auth method");
         }
+
+        for (char& c : m_signature)
+            c = '\0';
 
         json.add(Poco::JSON::Object());
         writeJson(json);
@@ -519,6 +571,7 @@ namespace autobahn {
         writeJson(json);
         send();
 
+        m_session_leave = decltype(m_session_leave)();
         return m_session_leave.get_future();
     }
 
@@ -533,6 +586,19 @@ namespace autobahn {
             throw std::out_of_range("received a message that was too big");
 
         ssout.read(m_sendBuffer, m_sendSize);
+
+        // workaround for a poco bug. will be fixed after 1.5.3
+        for (int i = 0; i < m_sendSize; i++)
+        {
+            switch (m_sendBuffer[i])
+            {
+            case '\b': m_sendBuffer[i] = 'b'; break;
+            case '\f': m_sendBuffer[i] = 'f'; break;
+            case '\n': m_sendBuffer[i] = 'n'; break;
+            case '\r': m_sendBuffer[i] = 'r'; break;
+            case '\t': m_sendBuffer[i] = 't'; break;
+            }
+        }
     }
 
 
@@ -612,7 +678,7 @@ namespace autobahn {
                     json.add(static_cast<int>(msg_code::YIELD));
                     json.add(request_id);
                     json.add(Poco::JSON::Object());
-                    json.add(res);
+                    json.add(DynToJSON(res));
                     writeJson(json);
                     send();
 
@@ -630,8 +696,8 @@ namespace autobahn {
                         json.add(static_cast<int>(msg_code::YIELD));
                         json.add(request_id);
                         json.add(Poco::JSON::Object());
-                        json.add(res.first);
-                        json.add(res.second);
+                        json.add(DynToJSON(res.first));
+                        json.add(DynToJSON(res.second));
                         writeJson(json);
                         send();
                     });
@@ -953,10 +1019,35 @@ namespace autobahn {
     }
 
 
+    void session::dbg_buffers() {
+        printf("sendBuffer:\n");
+        for (int i = 0; i < m_sendSize; i++)
+            printf("%02X ", (unsigned char)m_sendBuffer[i]);
+        printf("\nrecvBuffer:\n");
+        for (int i = 0; i < m_recvSize; i++)
+            printf("%02X ", (unsigned char)m_recvBuffer[i]);
+        printf("\n");
+    }
+
+
     void session::send() {
 
         if (!m_stopped) {
-            m_ws->sendFrame(m_sendBuffer, m_sendSize);
+            try {
+                m_ws->sendFrame(m_sendBuffer, m_sendSize);
+            } catch (Poco::Exception& e) {
+                poco_error(m_logger, e.displayText().c_str());
+                m_stopped = true;
+                dbg_buffers();
+            } catch (protocol_error& e) {
+                poco_error(m_logger, e.what());
+                m_stopped = true;
+                dbg_buffers();
+            } catch (...) {
+                poco_error(m_logger, "unexpected exception");
+                m_stopped = true;
+                dbg_buffers();
+            }
         }
     }
 
@@ -967,19 +1058,27 @@ namespace autobahn {
                 int flags;
                 m_recvSize = m_ws->receiveFrame(m_recvBuffer, sizeof(m_recvBuffer), flags);
                 if (m_recvSize == 0)
+                {
+                    m_stopped = true;
                     break;
+                }
 
                 got_msg();
             } catch (Poco::Exception& e) {
                 poco_error(m_logger, e.displayText().c_str());
+                dbg_buffers();
                 break;
             } catch (protocol_error& e) {
                 poco_error(m_logger, e.what());
+                dbg_buffers();
                 break;
             } catch (...) {
                 poco_error(m_logger, "unexpected exception");
+                dbg_buffers();
                 break;
             }
         }
+
+        m_stopped = true;
     }
 }
