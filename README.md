@@ -1,6 +1,6 @@
 # **WAMP_POCO**
 
-**WAMP_POCO** is a fork of [AutobahnCpp](https://github.com/tavendo/AutobahnCpp) that is using [POCO](http://pocoproject.org) instead of Boost. JSON is used for serialization and the transport is WebSocket (optionally via SSL). Errors are handles with std::future exceptions. Authentication with "ticket" and "wampcra" methods is implemented.
+**WAMP_POCO** is a fork of [AutobahnCpp](https://github.com/tavendo/AutobahnCpp) that is using [POCO](http://pocoproject.org) instead of Boost. JSON is used for serialization and the transport is WebSocket (optionally via SSL). Errors are raised by std::future exceptions. Authentication with "ticket" and "wampcra" methods is implemented.
 
 ## Dependencies
 
@@ -12,7 +12,7 @@
 
 Notable changes to AutobahnCpp:
 
-* Using std::future instead of boost::future. The missing "then" continuation functionality is implemented in util/Continuation.h
+* Using std::future instead of boost::future. The missing "then" continuation functionality is implemented in util/Continuation.h. `future.then([]{ ... });` can be rewritten to `util::then(future, []{ ... });`
 * Using Poco::Dynamic instead of boost any libraries. See [documentation](http://pocoproject.org/docs/Poco.Dynamic.html) for usage
 
 The examples in this repository are not updated for this fork. The changes would be trivial as demonstrated in the following.
