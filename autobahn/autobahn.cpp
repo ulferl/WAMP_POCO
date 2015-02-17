@@ -16,6 +16,8 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#include "autobahn.h"
+
 #include "util/Continuation.h"
 #include "util/make_unique.h"
 #include "util/SHA256Engine.h"

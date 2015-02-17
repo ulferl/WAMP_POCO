@@ -16,8 +16,8 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifndef AUTOBAHN_HPP
-#define AUTOBAHN_HPP
+#ifndef AUTOBAHN_H
+#define AUTOBAHN_H
 
 #include <cstdint>
 #include <stdexcept>
@@ -140,25 +140,21 @@ namespace autobahn {
 
     public:
 
-        inline
-            ~session();
+        ~session();
 
         /*!
         * Start listening on the IStream provided to the constructor
         * of this session.
         */
-        inline
-            bool start(const Poco::Net::SocketAddress& addr, bool useSSL = false);
+        bool start(const Poco::Net::SocketAddress& addr, bool useSSL = false);
 
         /*!
         * Closes the IStream and the OStream provided to the constructor
         * of this session.
         */
-        inline
-            void stop();
+        void stop();
 
-        inline
-            bool isConnected() const;
+        bool isConnected() const;
 
         /*!
         * Join a realm with this session.
@@ -169,8 +165,7 @@ namespace autobahn {
         * \param signature The signature to use when logging in. For method "ticket" the ticket, for method "wampcra" the passphrase.
         * \return A future that resolves with the session ID when the realm was joined.
         */
-        inline
-            std::future<uint64_t> join(const std::string& realm, const std::string& method = "", const std::string& authid = "", const std::string& signature = "");
+        std::future<uint64_t> join(const std::string& realm, const std::string& method = "", const std::string& authid = "", const std::string& signature = "");
 
         /*!
         * Leave the realm.
@@ -178,12 +173,10 @@ namespace autobahn {
         * \param reason An optional WAMP URI providing a reason for leaving.
         * \return A future that resolves with the reason sent by the peer.
         */
-        inline
-            std::future<std::string> leave(const std::string& reason = std::string("wamp.error.close_realm"));
+        std::future<std::string> leave(const std::string& reason = std::string("wamp.error.close_realm"));
 
 
-        inline
-            authinfo getAuthInfo() const;
+        authinfo getAuthInfo() const;
 
 
         /*!
@@ -191,8 +184,7 @@ namespace autobahn {
         *
         * \param topic The URI of the topic to publish to.
         */
-        inline
-            void publish(const std::string& topic);
+        void publish(const std::string& topic);
 
         /*!
         * Publish an event with positional payload to a topic.
@@ -200,8 +192,7 @@ namespace autobahn {
         * \param topic The URI of the topic to publish to.
         * \param args The positional payload for the event.
         */
-        inline
-            void publish(const std::string& topic, const anyvec& args);
+        void publish(const std::string& topic, const anyvec& args);
 
         /*!
         * Publish an event with both positional and keyword payload to a topic.
@@ -210,8 +201,7 @@ namespace autobahn {
         * \param args The positional payload for the event.
         * \param kwargs The keyword payload for the event.
         */
-        inline
-            void publish(const std::string& topic, const anyvec& args, const anymap& kwargs);
+        void publish(const std::string& topic, const anyvec& args, const anymap& kwargs);
 
 
         /*!
@@ -221,8 +211,7 @@ namespace autobahn {
         * \param handler The handler that will receive events under the subscription.
         * \return A future that resolves to a autobahn::subscription
         */
-        inline
-            std::future<subscription> subscribe(const std::string& topic, handler_t handler);
+        std::future<subscription> subscribe(const std::string& topic, handler_t handler);
 
 
         /*!
@@ -231,8 +220,7 @@ namespace autobahn {
         * \param procedure The URI of the remote procedure to call.
         * \return A future that resolves to the result of the remote procedure call.
         */
-        inline
-            std::future<any> call(const std::string& procedure);
+        std::future<any> call(const std::string& procedure);
 
         /*!
         * Calls a remote procedure with positional arguments.
@@ -241,8 +229,7 @@ namespace autobahn {
         * \param args The positional arguments for the call.
         * \return A future that resolves to the result of the remote procedure call.
         */
-        inline
-            std::future<any> call(const std::string& procedure, const anyvec& args);
+        std::future<any> call(const std::string& procedure, const anyvec& args);
 
         /*!
         * Calls a remote procedure with positional and keyword arguments.
@@ -252,8 +239,7 @@ namespace autobahn {
         * \param kwargs The keyword arguments for the call.
         * \return A future that resolves to the result of the remote procedure call.
         */
-        inline
-            std::future<any> call(const std::string& procedure, const anyvec& args, const anymap& kwargs);
+        std::future<any> call(const std::string& procedure, const anyvec& args, const anymap& kwargs);
 
 
         /*!
@@ -263,26 +249,26 @@ namespace autobahn {
         * \param endpoint The endpoint to be exposed as a remotely callable procedure.
         * \return A future that resolves to a autobahn::registration
         */
-        inline std::future<registration> provide(const std::string& procedure, endpoint_t endpoint);
+        std::future<registration> provide(const std::string& procedure, endpoint_t endpoint);
 
-        inline std::future<registration> provide_v(const std::string& procedure, endpoint_v_t endpoint);
+        std::future<registration> provide_v(const std::string& procedure, endpoint_v_t endpoint);
 
-        inline std::future<registration> provide_m(const std::string& procedure, endpoint_m_t endpoint);
+        std::future<registration> provide_m(const std::string& procedure, endpoint_m_t endpoint);
 
-        inline std::future<registration> provide_vm(const std::string& procedure, endpoint_vm_t endpoint);
+        std::future<registration> provide_vm(const std::string& procedure, endpoint_vm_t endpoint);
 
-        inline std::future<registration> provide_f(const std::string& procedure, endpoint_f_t endpoint);
+        std::future<registration> provide_f(const std::string& procedure, endpoint_f_t endpoint);
 
-        inline std::future<registration> provide_fv(const std::string& procedure, endpoint_fv_t endpoint);
+        std::future<registration> provide_fv(const std::string& procedure, endpoint_fv_t endpoint);
 
-        inline std::future<registration> provide_fm(const std::string& procedure, endpoint_fm_t endpoint);
+        std::future<registration> provide_fm(const std::string& procedure, endpoint_fm_t endpoint);
 
-        inline std::future<registration> provide_fvm(const std::string& procedure, endpoint_fvm_t endpoint);
+        std::future<registration> provide_fvm(const std::string& procedure, endpoint_fvm_t endpoint);
 
     private:
 
         template<typename E>
-        inline std::future<registration> _provide(const std::string& procedure, E endpoint);
+        std::future<registration> _provide(const std::string& procedure, E endpoint);
 
 
         //////////////////////////////////////////////////////////////////////////////////////
@@ -363,51 +349,51 @@ namespace autobahn {
 
 
         /// Process a WAMP WELCOME message.
-        inline void process_welcome(const wamp_msg_t& msg);
+        void process_welcome(const wamp_msg_t& msg);
 
         /// Process a WAMP ABORT message.
-        inline void process_abort(const wamp_msg_t& msg);
+        void process_abort(const wamp_msg_t& msg);
 
         /// Process a WAMP CHALLENGE message.
-        inline void process_challenge(const wamp_msg_t& msg);
+        void process_challenge(const wamp_msg_t& msg);
 
         /// Process a WAMP ERROR message.
-        inline void process_error(const wamp_msg_t& msg);
+        void process_error(const wamp_msg_t& msg);
 
         /// Process a WAMP RESULT message.
-        inline void process_call_result(const wamp_msg_t& msg);
+        void process_call_result(const wamp_msg_t& msg);
 
         /// Process a WAMP SUBSCRIBED message.
-        inline void process_subscribed(const wamp_msg_t& msg);
+        void process_subscribed(const wamp_msg_t& msg);
 
         /// Process a WAMP EVENT message.
-        inline void process_event(const wamp_msg_t& msg);
+        void process_event(const wamp_msg_t& msg);
 
         /// Process a WAMP REGISTERED message.
-        inline void process_registered(const wamp_msg_t& msg);
+        void process_registered(const wamp_msg_t& msg);
 
         /// Process a WAMP INVOCATION message.
-        inline void process_invocation(const wamp_msg_t& msg);
+        void process_invocation(const wamp_msg_t& msg);
 
         /// Process a WAMP GOODBYE message.
-        inline void process_goodbye(const wamp_msg_t& msg);
+        void process_goodbye(const wamp_msg_t& msg);
 
 
         /// serializes json to output buffer
         /// T must have stringify(std::ofstream&) member function
         template <typename T>
-        inline void writeJson(const T& objOrArray);
+        void writeJson(const T& objOrArray);
 
-        inline void dbg_buffers();
+        void dbg_buffers();
 
         /// Send out message serialized in serialization buffer to ostream.
-        inline void send();
+        void send();
 
         /// Runs the session
-        inline void run();
+        void run();
 
 
-        inline void got_msg();
+        void got_msg();
 
 
         Poco::Logger& m_logger = Poco::Logger::get("autobahn");
@@ -494,6 +480,4 @@ namespace autobahn {
 
 }
 
-#include "autobahn_impl.hpp"
-
-#endif // AUTOBAHN_HPP
+#endif // AUTOBAHN_H
