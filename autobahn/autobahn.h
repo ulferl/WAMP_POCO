@@ -31,11 +31,9 @@
 
 #include <future>
 
-#include <Poco/Net/HTTPClientSession.h>
+#include <Poco/Net/HTTPSClientSession.h>
 #include <Poco/Net/HTTPRequest.h>
 #include <Poco/Net/HTTPResponse.h>
-#include <Poco/Net/HTTPSClientSession.h>
-#include <Poco/Net/Context.h>
 #include <Poco/Net/WebSocket.h>
 #include <Poco/JSON/Parser.h>
 #include <Poco/JSON/Stringifier.h>
@@ -150,7 +148,7 @@ namespace autobahn {
         * of this session.
         */
         inline
-            bool start(const Poco::Net::SocketAddress& addr);
+            bool start(const Poco::Net::SocketAddress& addr, bool useSSL = false);
 
         /*!
         * Closes the IStream and the OStream provided to the constructor

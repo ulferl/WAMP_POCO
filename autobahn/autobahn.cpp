@@ -59,7 +59,7 @@ namespace autobahn {
         stop();
     }
 
-    bool session::start(const Poco::Net::SocketAddress& addr) {
+    bool session::start(const Poco::Net::SocketAddress& addr, bool useSSL) {
 
         stop();
 
@@ -69,11 +69,16 @@ namespace autobahn {
 
             request.add("Sec-WebSocket-Protocol", "wamp.2.json");
 
-            // TODO make configurable
-            //m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
+            if (useSSL)
+            {
+                Poco::Net::Context::Ptr ctx = new Poco::Net::Context(Poco::Net::Context::CLIENT_USE, "", Poco::Net::Context::VERIFY_NONE, 9, true);
+                m_httpsession = std::make_unique<Poco::Net::HTTPSClientSession>(addr.host().toString(), addr.port(), ctx);
+            }
+            else
+            {
+                m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
+            }
 
-            Poco::Net::Context::Ptr ctx = new Poco::Net::Context(Poco::Net::Context::CLIENT_USE, "", Poco::Net::Context::VERIFY_NONE, 9, true);
-            m_httpsession = std::make_unique<Poco::Net::HTTPSClientSession>(addr.host().toString(), addr.port(), ctx);
             m_ws = std::make_unique<Poco::Net::WebSocket>(*m_httpsession, request, response);
             m_ws->setReceiveTimeout(0);
 
