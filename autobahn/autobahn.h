@@ -384,8 +384,6 @@ namespace autobahn {
         template <typename T>
         void writeJson(const T& objOrArray);
 
-        void dbg_buffers();
-
         /// Send out message serialized in serialization buffer to ostream.
         void send();
 

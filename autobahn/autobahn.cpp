@@ -1026,17 +1026,6 @@ namespace autobahn {
     }
 
 
-    void session::dbg_buffers() {
-        printf("sendBuffer:\n");
-        for (int i = 0; i < m_sendSize; i++)
-            printf("%02X ", (unsigned char)m_sendBuffer[i]);
-        printf("\nrecvBuffer:\n");
-        for (int i = 0; i < m_recvSize; i++)
-            printf("%02X ", (unsigned char)m_recvBuffer[i]);
-        printf("\n");
-    }
-
-
     void session::send() {
 
         if (!m_stopped) {
@@ -1045,15 +1034,12 @@ namespace autobahn {
             } catch (Poco::Exception& e) {
                 poco_error(m_logger, e.displayText().c_str());
                 m_stopped = true;
-                dbg_buffers();
             } catch (protocol_error& e) {
                 poco_error(m_logger, e.what());
                 m_stopped = true;
-                dbg_buffers();
             } catch (...) {
                 poco_error(m_logger, "unexpected exception");
                 m_stopped = true;
-                dbg_buffers();
             }
         }
     }
@@ -1073,15 +1059,12 @@ namespace autobahn {
                 got_msg();
             } catch (Poco::Exception& e) {
                 poco_error(m_logger, e.displayText().c_str());
-                dbg_buffers();
                 break;
             } catch (protocol_error& e) {
                 poco_error(m_logger, e.what());
-                dbg_buffers();
                 break;
             } catch (...) {
                 poco_error(m_logger, "unexpected exception");
-                dbg_buffers();
                 break;
             }
         }
