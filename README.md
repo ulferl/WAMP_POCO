@@ -1,3 +1,79 @@
+# **WAMP_POCO**
+
+**WAMP_POCO** is a fork of [AutobahnCpp](https://github.com/tavendo/AutobahnCpp) that is using [POCO](http://pocoproject.org) instead of Boost. JSON is used for serialization and the transport is WebSocket (optionally via SSL). Errors are handles with std::future exceptions. Authentication with "ticket" and "wampcra" methods is implemented.
+
+## Dependencies
+
+* Modern C++ compiler (MSVC 2013 and GCC 4.7 tested)
+* POCO Libraries (1.5.3+ for WAMP-CRA support)
+* openssl (required by POCO's Net_SSL module)
+
+## Example code
+
+Notable changes to AutobahnCpp:
+
+* Using std::future instead of boost::future. The missing "then" continuation functionality is implemented in util/Continuation.h
+* Using Poco::Dynamic instead of boost any libraries. See [documentation](http://pocoproject.org/docs/Poco.Dynamic.html) for usage
+
+The examples in this repository are not updated for this fork. The changes would be trivial as demonstrated in the following.
+
+**Calling a remote Procedure**
+
+```c++
+auto c1 = util::then(session.call("com.mathservice.add2", {23, 777}),
+   [&](std::future<any> f) {
+		cout << "Got call result " << f.get().convert<uint64_t>() << endl;
+	});
+```
+
+**Registering a remoted Procedure**
+```c++
+auto r1 = util::then(session.provide("com.myapp.cpp.square",
+   [](const anyvec& args, const anymap& kwargs) {
+      cout << "Procedure is invoked .." << endl;
+      uint64_t x = args[0].convert<uint64_t>();
+      return x * x;
+   }),
+
+   [](future<registration> reg) {
+      cout << "Registered with ID " << reg.get().id << endl;
+   });
+```
+
+**Publishing an Event**
+
+```c++
+session.publish("com.myapp.topic2", {23, true, string("hello")});
+```
+
+**Publishing an Event (acknowledged)**
+
+```c++
+auto opts = PublishOptions();
+opts.acknowledge = True;
+
+auto p1 = util::then(session.publish("com.myapp.topic2", {23, true, string("hello")}, opts),
+
+   [](future<publication> pub) {
+      cout << "Published with ID " << pub.get().id << endl;
+   });
+```
+
+**Subscribing to a Topic**
+
+```c++
+auto s1 = util::then(session.subscribe("com.myapp.topic1",
+   [](const anyvec& args, const anymap& kwargs) {
+      cout << "Got event: " << args[0].convert<uint64_t>() << endl;
+   }),
+
+   [](future<subscription> sub) {
+      cout << "Subscribed with ID " << sub.get().id << endl;
+   });
+```
+
+# **Below is the original README**
+
 # **Autobahn**|Cpp
 
 **Autobahn**|Cpp is a subproject of [Autobahn](http://autobahn.ws/) which implements the [Web Application Messaging Protocol (WAMP)](http://wamp.ws/) in C++ supporting the following application roles
