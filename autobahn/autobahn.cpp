@@ -1050,7 +1050,7 @@ namespace autobahn {
             try {
                 int flags;
                 m_recvSize = m_ws->receiveFrame(m_recvBuffer, sizeof(m_recvBuffer), flags);
-                if (m_recvSize == 0)
+                if (m_recvSize == 0 || flags & Poco::Net::WebSocket::FRAME_OP_CLOSE)
                 {
                     m_stopped = true;
                     break;
