@@ -15,6 +15,8 @@ Notable changes to AutobahnCpp:
 * Using std::future instead of boost::future. The missing "then" continuation functionality is implemented in util/Continuation.h. `future.then([]{ ... });` can be rewritten to `util::then(future, []{ ... });`
 * Using Poco::Dynamic instead of boost any libraries. See [documentation](http://pocoproject.org/docs/Poco.Dynamic.html) for usage
 
+For a complete compilable example see the directory `examples_poco`.
+
 The examples in this repository are not updated for this fork. The changes would be trivial as demonstrated in the following.
 
 **Calling a remote Procedure**

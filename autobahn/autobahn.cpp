@@ -446,23 +446,46 @@ namespace autobahn {
         {
             anymap extra = msg[2].extract<anymap>();
 
-            std::string salt = extra["salt"];
-            int iterations = extra["iterations"];
             std::string challenge = extra["challenge"];
+            std::string secret = m_signature;
 
-            // derive a key
-            Poco::PBKDF2Engine<Poco::HMACEngine<util::SHA256Engine>> pbkdf2(salt, iterations);
-            pbkdf2.update(m_signature);
-            auto key = pbkdf2.digest();
+            // Optionally salt the secret: secret := PBKDF<HMAC<SHA256>>(secret)
+            if (extra.contains("salt"))
+            {
+                std::string salt = extra["salt"];
+                int iterations = 1000;
+                if (extra.contains("iterations"))
+                {
+                    iterations = extra["iterations"];
+                }
+                int keylen = 32;
+                if (extra.contains("keylen"))
+                {
+                    keylen = extra["keylen"];
+                }
 
-            std::stringstream ssKey;
-            Poco::Base64Encoder encoderKey(ssKey);
-            for (auto c : key)
-                encoderKey << c;
-            encoderKey.close();
+                // Derive a key.
+                Poco::PBKDF2Engine<Poco::HMACEngine<util::SHA256Engine>> pbkdf2(salt, iterations);
+                pbkdf2.update(secret);
+                auto key = pbkdf2.digest();
 
-            // sign
-            Poco::HMACEngine<util::SHA256Engine> hmac(ssKey.str());
+                // Truncate key.
+                if (key.size() > keylen)
+                {
+                    key.resize(keylen);
+                }
+
+                std::stringstream ssKey;
+                Poco::Base64Encoder encoderKey(ssKey);
+                for (auto c : key)
+                    encoderKey << c;
+                encoderKey.close();
+
+                secret = ssKey.str();
+            }
+
+            // Sign the secret with the challenge.
+            Poco::HMACEngine<util::SHA256Engine> hmac(secret);
             hmac.update(challenge);
             auto signature = hmac.digest();
 
