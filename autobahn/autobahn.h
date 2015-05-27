@@ -28,9 +28,13 @@
 #include <vector>
 #include <map>
 #include <functional>
-
 #include <future>
+#include <queue>
+#include <mutex>
+#include <atomic>
 
+#include <Poco/Net/SocketReactor.h>
+#include <Poco/Net/SocketNotification.h>
 #include <Poco/Net/HTTPSClientSession.h>
 #include <Poco/Net/HTTPRequest.h>
 #include <Poco/Net/HTTPResponse.h>
@@ -140,6 +144,8 @@ namespace autobahn {
 
     public:
 
+        session(Poco::Net::SocketReactor& reactor);
+
         ~session();
 
         /*!
@@ -152,7 +158,7 @@ namespace autobahn {
         * Closes the IStream and the OStream provided to the constructor
         * of this session.
         */
-        void stop();
+        void stop(std::exception_ptr abortExc);
 
         bool isConnected() const;
 
@@ -287,6 +293,8 @@ namespace autobahn {
         /// Map of WAMP call ID -> call
         calls_t m_calls;
 
+        std::mutex m_callsMutex;
+
 
         //////////////////////////////////////////////////////////////////////////////////////
         /// Subscriber
@@ -308,11 +316,15 @@ namespace autobahn {
         /// Map of WAMP subscribe request ID -> subscribe request
         subscribe_requests_t m_subscribe_requests;
 
+        std::mutex m_subreqMutex;
+
         /// Map of subscribed handlers (subscription ID -> handler)
         typedef std::map<uint64_t, handler_t> handlers_t;
 
         /// Map of WAMP subscription ID -> handler
         handlers_t m_handlers;
+
+        // No mutex required.
 
 
         //////////////////////////////////////////////////////////////////////////////////////
@@ -334,6 +346,8 @@ namespace autobahn {
 
         /// Map of WAMP register request ID -> register request
         register_requests_t m_register_requests;
+
+        std::mutex m_regreqMutex;
 
         /// Map of registered endpoints (registration ID -> endpoint)
         typedef std::map<uint64_t, any> endpoints_t;
@@ -379,34 +393,28 @@ namespace autobahn {
         void process_goodbye(const wamp_msg_t& msg);
 
 
-        /// serializes json to output buffer
-        /// T must have stringify(std::ofstream&) member function
-        template <typename T>
-        void writeJson(const T& objOrArray);
+        /// Send wamp message. Asynchronous.
+        void send(const Poco::JSON::Array& json);
 
-        /// Send out message serialized in serialization buffer to ostream.
-        void send();
+        /// Process incoming message.
+        void got_msg(char *recvBuffer, int recvSize);
 
-        /// Runs the session
-        void run();
-
-
-        void got_msg();
+        // Handlers for SocketReactor.
+        void OnReadable(const Poco::AutoPtr<Poco::Net::ReadableNotification>& pNf);
+        void OnWritable(const Poco::AutoPtr<Poco::Net::WritableNotification>& pNf);
+        void OnError(const Poco::AutoPtr<Poco::Net::ErrorNotification>& pNf);
 
 
         Poco::Logger& m_logger = Poco::Logger::get("autobahn");
-
-        bool m_stopped = true;
+        Poco::Net::SocketReactor& m_reactor;
 
         std::unique_ptr<Poco::Net::HTTPClientSession> m_httpsession;
         std::unique_ptr<Poco::Net::WebSocket> m_ws;
-        std::thread m_runThread;
 
+        mutable std::mutex m_wsMutex;
 
-        char m_recvBuffer[BUFFER_SIZE];
-        int m_recvSize = 0;
-        char m_sendBuffer[BUFFER_SIZE];
-        int m_sendSize = 0;
+        std::mutex m_sendQueueMutex;
+        std::queue<std::vector<char>> m_sendQueue;
 
         Poco::JSON::Parser m_parser;
 
@@ -416,6 +424,8 @@ namespace autobahn {
         /// Future to be fired when session was joined.
         std::promise<uint64_t> m_session_join;
 
+        std::mutex m_joinMutex;
+
         /// Last request ID of outgoing WAMP requests.
         uint64_t m_request_id = 0;
 
@@ -424,6 +434,10 @@ namespace autobahn {
 
         /// Authentication information sent on welcome
         authinfo m_authinfo;
+
+        /// Data containing body of ping message for sending pong.
+        std::mutex m_pongBufferMutex;
+        std::vector<char> m_pongBuffer;
 
 
         bool m_goodbye_sent = false;
@@ -474,6 +488,11 @@ namespace autobahn {
     class server_error : public std::runtime_error {
     public:
         server_error(const std::string& msg) : std::runtime_error(msg) {};
+    };
+
+    class connection_error : public std::runtime_error {
+    public:
+        connection_error(const std::string& msg) : std::runtime_error(msg) {};
     };
 
 }

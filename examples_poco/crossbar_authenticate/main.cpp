@@ -1,12 +1,16 @@
 #include "autobahn.h"
 #include "Poco/ConsoleChannel.h"
+#include "Poco/Net/SocketReactor.h"
 #include <iostream>
 
 int main()
 {
     Poco::Net::initializeSSL();
     Poco::Logger::get("autobahn").setChannel(new Poco::ConsoleChannel());
-    autobahn::session ws;
+    Poco::Net::SocketReactor reactor;
+    autobahn::session ws(reactor);
+
+    std::thread th([&]{ reactor.run(); });
 
     try {
         if (!ws.start(Poco::Net::SocketAddress("localhost", 8080)))
@@ -29,4 +33,6 @@ int main()
     }
 
     std::cin.ignore();
+    reactor.stop();
+    th.join();
 }

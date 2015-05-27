@@ -25,6 +25,7 @@
 #include "Poco/PBKDF2Engine.h"
 #include "Poco/HMACEngine.h"
 #include "Poco/Base64Encoder.h"
+#include "Poco/NObserver.h"
 
 #include <stdlib.h>
 
@@ -56,14 +57,21 @@ static Poco::JSON::Object DynToJSON(const Poco::DynamicStruct& dynamic)
 
 namespace autobahn {
 
-    session::~session() {
-
-        stop();
+    session::session(Poco::Net::SocketReactor& reactor)
+        : m_reactor(reactor)
+    {
     }
 
-    bool session::start(const Poco::Net::SocketAddress& addr, bool useSSL) {
+    session::~session()
+    {
+        auto eptr = std::make_exception_ptr(connection_error("connection closed by destruction of session"));
+        stop(eptr);
+    }
 
-        stop();
+    bool session::start(const Poco::Net::SocketAddress& addr, bool useSSL)
+    {
+        auto eptr = std::make_exception_ptr(connection_error("connection closed by session reconnect"));
+        stop(eptr);
 
         try {
             Poco::Net::HTTPRequest request("GET", "/ws", Poco::Net::HTTPRequest::HTTP_1_1);
@@ -81,33 +89,68 @@ namespace autobahn {
                 m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
             }
 
+            std::lock_guard<std::mutex> lock(m_wsMutex);
+
             m_ws = std::make_unique<Poco::Net::WebSocket>(*m_httpsession, request, response);
-            m_ws->setReceiveTimeout(0);
+
+            m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ReadableNotification>(*this, &session::OnReadable));
+            m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ErrorNotification>(*this, &session::OnError));
 
         } catch (Poco::Exception&) {
             return false;
         }
 
-        m_stopped = false;
-        m_runThread = std::thread([this]{ run(); });
         return true;
     }
 
 
-    void session::stop() {
-        m_stopped = true;
-        if (m_runThread.joinable())
+    void session::stop(std::exception_ptr abortExc)
+    {
+        std::lock_guard<std::mutex> lock(m_wsMutex);
+
+        if (m_ws)
         {
-            if (m_ws)
+            // Try to shut down gracefully.
+            try
+            {
                 m_ws->shutdown();
-            m_runThread.join();
+            }
+            catch (...)
+            {
+                poco_information(m_logger, "connection closed uncleanly");
+            }
+
+            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ReadableNotification>(*this, &session::OnReadable));
+            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ErrorNotification>(*this, &session::OnError));
+            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
+
+            m_ws = nullptr;
+
+            std::lock_guard<std::mutex> lockCalls(m_callsMutex);
+            std::lock_guard<std::mutex> lockSubs(m_subreqMutex);
+            std::lock_guard<std::mutex> lockRegs(m_regreqMutex);
+
+            // Abort all pending requests.
+            for (auto& call : m_calls)
+                call.second.m_res.set_exception(abortExc);
+
+            for (auto& sub_req : m_subscribe_requests)
+                sub_req.second.m_res.set_exception(abortExc);
+
+            for (auto& reg_req : m_register_requests)
+                reg_req.second.m_res.set_exception(abortExc);
+
+            m_calls.clear();
+            m_subscribe_requests.clear();
+            m_register_requests.clear();
         }
     }
 
 
     bool session::isConnected() const
     {
-        return !m_stopped;
+        std::lock_guard<std::mutex> lock(m_wsMutex);
+        return m_ws != nullptr;
     }
 
 
@@ -138,9 +181,9 @@ namespace autobahn {
         }
 
         json.add(details);
+        send(json);
 
-        writeJson(json);
-        send();
+        std::lock_guard<std::mutex> lock(m_joinMutex);
 
         m_session_join = decltype(m_session_join)();
         return m_session_join.get_future();
@@ -154,11 +197,13 @@ namespace autobahn {
 
     std::future<subscription> session::subscribe(const std::string& topic, handler_t handler) {
 
+        // [SUBSCRIBE, Request|id, Options|dict, Topic|uri]
+
         if (!m_session_id) {
             throw no_session_error();
         }
 
-        // [SUBSCRIBE, Request|id, Options|dict, Topic|uri]
+        std::lock_guard<std::mutex> lock(m_subreqMutex);
 
         m_request_id += 1;
         m_subscribe_requests.insert(std::make_pair(m_request_id, subscribe_request_t(handler)));
@@ -168,9 +213,7 @@ namespace autobahn {
         json.add(m_request_id);
         json.add(Poco::JSON::Object());
         json.add(topic);
-
-        writeJson(json);
-        send();
+        send(json);
 
         return m_subscribe_requests[m_request_id].m_res.get_future();
     }
@@ -224,6 +267,8 @@ namespace autobahn {
             throw no_session_error();
         }
 
+        std::lock_guard<std::mutex> lock(m_regreqMutex);
+
         m_request_id += 1;
         m_register_requests.insert(std::make_pair(m_request_id, register_request_t(endpoint)));
 
@@ -234,8 +279,7 @@ namespace autobahn {
         json.add(m_request_id);
         json.add(Poco::JSON::Object());
         json.add(procedure);
-        writeJson(json);
-        send();
+        send(json);
 
         return m_register_requests[m_request_id].m_res.get_future();
     }
@@ -256,8 +300,7 @@ namespace autobahn {
         json.add(m_request_id);
         json.add(Poco::JSON::Object());
         json.add(topic);
-        writeJson(json);
-        send();
+        send(json);
     }
 
 
@@ -279,8 +322,7 @@ namespace autobahn {
             json.add(Poco::JSON::Object());
             json.add(topic);
             json.add(DynToJSON(args));
-            writeJson(json);
-            send();
+            send(json);
 
         } else {
 
@@ -308,8 +350,7 @@ namespace autobahn {
             json.add(topic);
             json.add(DynToJSON(args));
             json.add(DynToJSON(kwargs));
-            writeJson(json);
-            send();
+            send(json);
 
         } else {
 
@@ -324,6 +365,8 @@ namespace autobahn {
             throw no_session_error();
         }
 
+        std::lock_guard<std::mutex> lock(m_callsMutex);
+
         m_request_id += 1;
         m_calls.insert(std::make_pair(m_request_id, call_t()));
 
@@ -334,8 +377,7 @@ namespace autobahn {
         json.add(m_request_id);
         json.add(Poco::JSON::Object());
         json.add(procedure);
-        writeJson(json);
-        send();
+        send(json);
 
         return m_calls[m_request_id].m_res.get_future();
     }
@@ -349,6 +391,8 @@ namespace autobahn {
 
         if (args.size() > 0) {
 
+            std::lock_guard<std::mutex> lock(m_callsMutex);
+
             m_request_id += 1;
             m_calls.insert(std::make_pair(m_request_id, call_t()));
 
@@ -360,8 +404,7 @@ namespace autobahn {
             json.add(Poco::JSON::Object());
             json.add(procedure);
             json.add(DynToJSON(args));
-            writeJson(json);
-            send();
+            send(json);
 
             return m_calls[m_request_id].m_res.get_future();
 
@@ -380,6 +423,8 @@ namespace autobahn {
 
         if (kwargs.size() > 0) {
 
+            std::lock_guard<std::mutex> lock(m_callsMutex);
+
             m_request_id += 1;
             m_calls.insert(std::make_pair(m_request_id, call_t()));
 
@@ -392,8 +437,7 @@ namespace autobahn {
             json.add(procedure);
             json.add(DynToJSON(args));
             json.add(DynToJSON(kwargs));
-            writeJson(json);
-            send();
+            send(json);
 
             return m_calls[m_request_id].m_res.get_future();
 
@@ -420,6 +464,8 @@ namespace autobahn {
         if (details.contains("authrole"))
             m_authinfo.authrole = details["authrole"].toString();
 
+        std::lock_guard<std::mutex> lock(m_joinMutex);
+
         m_session_join.set_value(m_session_id);
     }
 
@@ -427,6 +473,8 @@ namespace autobahn {
     void session::process_abort(const wamp_msg_t& msg) {
 
         // [ABORT, Details|dict, Reason|uri]
+
+        std::lock_guard<std::mutex> lock(m_joinMutex);
 
         auto eptr = std::make_exception_ptr(server_error(msg[2].toString()));
         m_session_join.set_exception(eptr);
@@ -446,46 +494,23 @@ namespace autobahn {
         {
             anymap extra = msg[2].extract<anymap>();
 
+            std::string salt = extra["salt"];
+            int iterations = extra["iterations"];
             std::string challenge = extra["challenge"];
-            std::string secret = m_signature;
 
-            // Optionally salt the secret: secret := PBKDF<HMAC<SHA256>>(secret)
-            if (extra.contains("salt"))
-            {
-                std::string salt = extra["salt"];
-                int iterations = 1000;
-                if (extra.contains("iterations"))
-                {
-                    iterations = extra["iterations"];
-                }
-                int keylen = 32;
-                if (extra.contains("keylen"))
-                {
-                    keylen = extra["keylen"];
-                }
+            // derive a key
+            Poco::PBKDF2Engine<Poco::HMACEngine<util::SHA256Engine>> pbkdf2(salt, iterations);
+            pbkdf2.update(m_signature);
+            auto key = pbkdf2.digest();
 
-                // Derive a key.
-                Poco::PBKDF2Engine<Poco::HMACEngine<util::SHA256Engine>> pbkdf2(salt, iterations);
-                pbkdf2.update(secret);
-                auto key = pbkdf2.digest();
+            std::stringstream ssKey;
+            Poco::Base64Encoder encoderKey(ssKey);
+            for (auto c : key)
+                encoderKey << c;
+            encoderKey.close();
 
-                // Truncate key.
-                if (key.size() > keylen)
-                {
-                    key.resize(keylen);
-                }
-
-                std::stringstream ssKey;
-                Poco::Base64Encoder encoderKey(ssKey);
-                for (auto c : key)
-                    encoderKey << c;
-                encoderKey.close();
-
-                secret = ssKey.str();
-            }
-
-            // Sign the secret with the challenge.
-            Poco::HMACEngine<util::SHA256Engine> hmac(secret);
+            // sign
+            Poco::HMACEngine<util::SHA256Engine> hmac(ssKey.str());
             hmac.update(challenge);
             auto signature = hmac.digest();
 
@@ -508,8 +533,7 @@ namespace autobahn {
             c = '\0';
 
         json.add(Poco::JSON::Object());
-        writeJson(json);
-        send();
+        send(json);
     }
 
 
@@ -525,29 +549,37 @@ namespace autobahn {
         {
         case msg_code::REGISTER:
         {
+            std::lock_guard<std::mutex> lock(m_regreqMutex);
             auto register_request = m_register_requests.find(msg[2]);
             if (register_request != m_register_requests.end()) {
                 register_request->second.m_res.set_exception(eptr);
+                m_register_requests.erase(register_request);
             }
         }
             break;
         case msg_code::SUBSCRIBE:
         {
+            std::lock_guard<std::mutex> lock(m_subreqMutex);
             auto subscribe_request = m_subscribe_requests.find(msg[2]);
             if (subscribe_request != m_subscribe_requests.end()) {
                 subscribe_request->second.m_res.set_exception(eptr);
+                m_subscribe_requests.erase(subscribe_request);
             }
         }
             break;
         case msg_code::CALL:
         {
+            std::lock_guard<std::mutex> lock(m_callsMutex);
             auto call_req = m_calls.find(msg[2]);
             if (call_req != m_calls.end()) {
                 call_req->second.m_res.set_exception(eptr);
+                m_calls.erase(call_req);
             }
         }
             break;
+        default:
             // TODO: INVOCATION, UNREGISTER, PUBLISH, UNSUBSCRIBE
+            poco_trace(m_logger, "ERROR not handled");
         }
     }
 
@@ -571,8 +603,7 @@ namespace autobahn {
             json.add(static_cast<int>(msg_code::GOODBYE));
             json.add(Poco::JSON::Object());
             json.add("wamp.error.goodbye_and_out");
-            writeJson(json);
-            send();
+            send(json);
 
         } else {
             // we previously initiated closing, so this
@@ -598,37 +629,10 @@ namespace autobahn {
         json.add(static_cast<int>(msg_code::GOODBYE));
         json.add(Poco::JSON::Object());
         json.add(reason);
-        writeJson(json);
-        send();
+        send(json);
 
         m_session_leave = decltype(m_session_leave)();
         return m_session_leave.get_future();
-    }
-
-
-    template <typename T>
-    void session::writeJson(const T& objOrArray)
-    {
-        std::stringstream ssout;
-        objOrArray.stringify(ssout);
-        m_sendSize = static_cast<int>(ssout.tellp());
-        if (m_sendSize > BUFFER_SIZE)
-            throw std::out_of_range("received a message that was too big");
-
-        ssout.read(m_sendBuffer, m_sendSize);
-
-        // workaround for a poco bug. will be fixed after 1.5.3
-        for (int i = 0; i < m_sendSize; i++)
-        {
-            switch (m_sendBuffer[i])
-            {
-            case '\b': m_sendBuffer[i] = 'b'; break;
-            case '\f': m_sendBuffer[i] = 'f'; break;
-            case '\n': m_sendBuffer[i] = 'n'; break;
-            case '\r': m_sendBuffer[i] = 'r'; break;
-            case '\t': m_sendBuffer[i] = 't'; break;
-            }
-        }
     }
 
 
@@ -695,8 +699,7 @@ namespace autobahn {
                     Poco::JSON::Array result;
                     result.add(res);
                     json.add(result);
-                    writeJson(json);
-                    send();
+                    send(json);
 
                 } else if ((endpoint->second).type() == typeid(endpoint_v_t)) {
 
@@ -709,8 +712,7 @@ namespace autobahn {
                     json.add(request_id);
                     json.add(Poco::JSON::Object());
                     json.add(DynToJSON(res));
-                    writeJson(json);
-                    send();
+                    send(json);
 
                 } else if ((endpoint->second).type() == typeid(endpoint_fvm_t)) {
 
@@ -728,8 +730,7 @@ namespace autobahn {
                         json.add(Poco::JSON::Object());
                         json.add(DynToJSON(res.first));
                         json.add(DynToJSON(res.second));
-                        writeJson(json);
-                        send();
+                        send(json);
                     });
 
                     done.wait();
@@ -766,6 +767,8 @@ namespace autobahn {
 
         uint64_t request_id = msg[1];
 
+        std::lock_guard<std::mutex> lock(m_callsMutex);
+
         calls_t::iterator call = m_calls.find(request_id);
 
         if (call != m_calls.end()) {
@@ -792,6 +795,9 @@ namespace autobahn {
                 // empty result
                 call->second.m_res.set_value(any());
             }
+
+            m_calls.erase(call);
+
         } else {
             throw protocol_error("bogus RESULT message for non-pending request ID");
         }
@@ -812,6 +818,8 @@ namespace autobahn {
 
         uint64_t request_id = msg[1];
 
+        std::lock_guard<std::mutex> lock(m_subreqMutex);
+
         subscribe_requests_t::iterator subscribe_request = m_subscribe_requests.find(request_id);
 
         if (subscribe_request != m_subscribe_requests.end()) {
@@ -826,7 +834,7 @@ namespace autobahn {
 
             subscribe_request->second.m_res.set_value(subscription(subscription_id));
 
-            m_subscribe_requests.erase(request_id);
+            m_subscribe_requests.erase(subscribe_request);
 
         } else {
             throw protocol_error("bogus SUBSCRIBED message for non-pending request ID");
@@ -918,6 +926,8 @@ namespace autobahn {
 
         uint64_t request_id = msg[1];
 
+        std::lock_guard<std::mutex> lock(m_regreqMutex);
+
         register_requests_t::iterator register_request = m_register_requests.find(request_id);
 
         if (register_request != m_register_requests.end()) {
@@ -932,17 +942,19 @@ namespace autobahn {
 
             register_request->second.m_res.set_value(registration(registration_id));
 
+            m_register_requests.erase(register_request);
+
         } else {
             throw protocol_error("bogus REGISTERED message for non-pending request ID");
         }
     }
 
 
-    void session::got_msg() {
-
+    void session::got_msg(char *recvBuffer, int recvSize)
+    {
         m_parser.reset();
 
-        auto json = m_parser.parse(std::string(m_recvBuffer, m_recvSize));
+        auto json = m_parser.parse(std::string(recvBuffer, recvSize));
 
         wamp_msg_t msg = *json.extract<Poco::JSON::Array::Ptr>();
 
@@ -1049,49 +1061,144 @@ namespace autobahn {
     }
 
 
-    void session::send() {
+    void session::send(const Poco::JSON::Array& json)
+    {
+        if (!isConnected())
+        {
+            throw connection_error("not connected");
+        }
 
-        if (!m_stopped) {
-            try {
-                m_ws->sendFrame(m_sendBuffer, m_sendSize);
-            } catch (Poco::Exception& e) {
-                poco_error(m_logger, e.displayText().c_str());
-                m_stopped = true;
-            } catch (protocol_error& e) {
-                poco_error(m_logger, e.what());
-                m_stopped = true;
-            } catch (...) {
-                poco_error(m_logger, "unexpected exception");
-                m_stopped = true;
+        std::stringstream ssout;
+        json.stringify(ssout);
+        auto sendSize = static_cast<size_t>(ssout.tellp());
+        if (sendSize > BUFFER_SIZE)
+        {
+            throw std::out_of_range("message too large to send");
+        }
+
+        std::vector<char> sendBuffer(sendSize);
+        ssout.read(sendBuffer.data(), sendSize);
+
+        // workaround for a poco bug. is fixed since 1.5.4
+        for (char& c : sendBuffer)
+        {
+            switch (c)
+            {
+            case '\b': c = 'b'; break;
+            case '\f': c = 'f'; break;
+            case '\n': c = 'n'; break;
+            case '\r': c = 'r'; break;
+            case '\t': c = 't'; break;
             }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_sendQueueMutex);
+            m_sendQueue.push(std::move(sendBuffer));
+        }
+
+        std::lock_guard<std::mutex> lock2(m_wsMutex);
+
+        m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
+    }
+
+    void session::OnReadable(const Poco::AutoPtr<Poco::Net::ReadableNotification>& pNf)
+    {
+        try
+        {
+            char recvBuffer[BUFFER_SIZE];
+            int flags;
+            int recvSize;
+
+            {
+                std::lock_guard<std::mutex> lock(m_wsMutex);
+                recvSize = m_ws->receiveFrame(recvBuffer, sizeof(recvBuffer), flags);
+            }
+
+            int frameOp = flags & Poco::Net::WebSocket::FRAME_OP_BITMASK;
+
+            if (recvSize == 0 || frameOp == Poco::Net::WebSocket::FRAME_OP_CLOSE)
+            {
+                auto eptr = std::make_exception_ptr(connection_error("connection closed"));
+                stop(eptr);
+                return;
+            }
+
+            if (frameOp == Poco::Net::WebSocket::FRAME_OP_PING)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(m_pongBufferMutex);
+                    m_pongBuffer.resize(recvSize);
+                    std::copy(recvBuffer, recvBuffer + recvSize, m_pongBuffer.begin());
+                }
+
+                std::lock_guard<std::mutex> lock(m_wsMutex);
+                m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
+                return;
+            }
+
+            got_msg(recvBuffer, recvSize);
+        }
+        catch (...)
+        {
+            stop(std::current_exception());
         }
     }
 
-    void session::run() {
-        while (!m_stopped)
+    void session::OnWritable(const Poco::AutoPtr<Poco::Net::WritableNotification>& pNf)
+    {
+        try
         {
-            try {
-                int flags;
-                m_recvSize = m_ws->receiveFrame(m_recvBuffer, sizeof(m_recvBuffer), flags);
-                if (m_recvSize == 0 || flags & Poco::Net::WebSocket::FRAME_OP_CLOSE)
+            {
+                std::lock_guard<std::mutex> lock(m_pongBufferMutex);
+
+                if (m_pongBuffer.size())
                 {
-                    m_stopped = true;
-                    break;
+                    std::lock_guard<std::mutex> lock(m_wsMutex);
+                    int rc = m_ws->sendFrame(m_pongBuffer.data(), m_pongBuffer.size(),
+                        Poco::Net::WebSocket::FRAME_FLAG_FIN | Poco::Net::WebSocket::FRAME_OP_PONG);
+                    if (rc != m_pongBuffer.size())
+                    {
+                        // Incomplete send. Do not remove writable handler.
+                        return;
+                    }
+
+                    m_pongBuffer.clear();
+                }
+            }
+
+            std::lock_guard<std::mutex> lock(m_sendQueueMutex);
+
+            while (m_sendQueue.size())
+            {
+                auto& sendBuffer = m_sendQueue.front();
+
+                {
+                    std::lock_guard<std::mutex> lock(m_wsMutex);
+                    int rc = m_ws->sendFrame(sendBuffer.data(), sendBuffer.size());
+                    if (rc != sendBuffer.size())
+                    {
+                        // Incomplete send. Do not remove writable handler.
+                        return;
+                    }
                 }
 
-                got_msg();
-            } catch (Poco::Exception& e) {
-                poco_error(m_logger, e.displayText().c_str());
-                break;
-            } catch (protocol_error& e) {
-                poco_error(m_logger, e.what());
-                break;
-            } catch (...) {
-                poco_error(m_logger, "unexpected exception");
-                break;
+                m_sendQueue.pop();
             }
         }
+        catch (...)
+        {
+            stop(std::current_exception());
+        }
 
-        m_stopped = true;
+        std::lock_guard<std::mutex> lock2(m_wsMutex);
+
+        m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
+    }
+
+    void session::OnError(const Poco::AutoPtr<Poco::Net::ErrorNotification>& pNf)
+    {
+        auto eptr = std::make_exception_ptr(connection_error("socket error"));
+        stop(eptr);
     }
 }
