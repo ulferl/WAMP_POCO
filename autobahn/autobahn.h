@@ -215,9 +215,10 @@ namespace autobahn {
         *
         * \param topic The URI of the topic to subscribe to.
         * \param handler The handler that will receive events under the subscription.
+        * \param options WAMP options for the subscription request.
         * \return A future that resolves to a autobahn::subscription
         */
-        std::future<subscription> subscribe(const std::string& topic, handler_t handler);
+        std::future<subscription> subscribe(const std::string& topic, handler_t handler, const anymap& options = {});
 
 
         /*!

@@ -195,7 +195,7 @@ namespace autobahn {
     }
 
 
-    std::future<subscription> session::subscribe(const std::string& topic, handler_t handler) {
+    std::future<subscription> session::subscribe(const std::string& topic, handler_t handler, const anymap& options) {
 
         // [SUBSCRIBE, Request|id, Options|dict, Topic|uri]
 
@@ -211,7 +211,7 @@ namespace autobahn {
         Poco::JSON::Array json;
         json.add(static_cast<int>(msg_code::SUBSCRIBE));
         json.add(m_request_id);
-        json.add(Poco::JSON::Object());
+        json.add(DynToJSON(options));
         json.add(topic);
         send(json);
 
@@ -1063,11 +1063,6 @@ namespace autobahn {
 
     void session::send(const Poco::JSON::Array& json)
     {
-        if (!isConnected())
-        {
-            throw connection_error("not connected");
-        }
-
         std::stringstream ssout;
         json.stringify(ssout);
         auto sendSize = static_cast<size_t>(ssout.tellp());
@@ -1092,12 +1087,16 @@ namespace autobahn {
             }
         }
 
+        std::lock_guard<std::mutex> lock(m_wsMutex);
+        if (m_ws == nullptr)
         {
-            std::lock_guard<std::mutex> lock(m_sendQueueMutex);
-            m_sendQueue.push(std::move(sendBuffer));
+            throw connection_error("not connected");
         }
 
-        std::lock_guard<std::mutex> lock2(m_wsMutex);
+        {
+            std::lock_guard<std::mutex> lock2(m_sendQueueMutex);
+            m_sendQueue.push(std::move(sendBuffer));
+        }
 
         m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
     }
@@ -1154,7 +1153,7 @@ namespace autobahn {
 
                 if (m_pongBuffer.size())
                 {
-                    std::lock_guard<std::mutex> lock(m_wsMutex);
+                    std::lock_guard<std::mutex> lock2(m_wsMutex);
                     int rc = m_ws->sendFrame(m_pongBuffer.data(), m_pongBuffer.size(),
                         Poco::Net::WebSocket::FRAME_FLAG_FIN | Poco::Net::WebSocket::FRAME_OP_PONG);
                     if (rc != m_pongBuffer.size())
@@ -1167,14 +1166,14 @@ namespace autobahn {
                 }
             }
 
-            std::lock_guard<std::mutex> lock(m_sendQueueMutex);
+            std::lock_guard<std::mutex> lock(m_wsMutex);
+            std::lock_guard<std::mutex> lock2(m_sendQueueMutex);
 
             while (m_sendQueue.size())
             {
                 auto& sendBuffer = m_sendQueue.front();
 
                 {
-                    std::lock_guard<std::mutex> lock(m_wsMutex);
                     int rc = m_ws->sendFrame(sendBuffer.data(), sendBuffer.size());
                     if (rc != sendBuffer.size())
                     {
@@ -1191,7 +1190,7 @@ namespace autobahn {
             stop(std::current_exception());
         }
 
-        std::lock_guard<std::mutex> lock2(m_wsMutex);
+        std::lock_guard<std::mutex> lock(m_wsMutex);
 
         m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
     }
