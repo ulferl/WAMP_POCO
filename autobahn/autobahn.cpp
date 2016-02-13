@@ -17,19 +17,22 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "autobahn.h"
+#include "ApplicationWebSocket.h"
 
 #include "util/Continuation.h"
 #include "util/make_unique.h"
 #include "util/SHA256Engine.h"
 
-#include "Poco/PBKDF2Engine.h"
-#include "Poco/HMACEngine.h"
-#include "Poco/Base64Encoder.h"
-#include "Poco/NObserver.h"
+#include <Poco/Net/HTTPSClientSession.h>
+#include <Poco/Net/HTTPRequest.h>
+#include <Poco/Net/HTTPResponse.h>
+#include <Poco/JSON/Stringifier.h>
+#include <Poco/PBKDF2Engine.h>
+#include <Poco/HMACEngine.h>
+#include <Poco/Base64Encoder.h>
+#include <Poco/NObserver.h>
 
-#include <stdlib.h>
-
-
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -57,9 +60,9 @@ static Poco::JSON::Object DynToJSON(const Poco::DynamicStruct& dynamic)
 
 namespace autobahn {
 
-    session::session(Poco::Net::SocketReactor& reactor)
-        : m_reactor(reactor)
+    session::session()
     {
+        m_running = false;
     }
 
     session::~session()
@@ -73,7 +76,8 @@ namespace autobahn {
         auto eptr = std::make_exception_ptr(connection_error("connection closed by session reconnect"));
         stop(eptr);
 
-        try {
+        try
+        {
             Poco::Net::HTTPRequest request("GET", "/ws", Poco::Net::HTTPRequest::HTTP_1_1);
             Poco::Net::HTTPResponse response;
 
@@ -89,16 +93,18 @@ namespace autobahn {
                 m_httpsession = std::make_unique<Poco::Net::HTTPClientSession>(addr);
             }
 
-            std::lock_guard<std::mutex> lock(m_wsMutex);
+            m_ws = std::make_shared<ApplicationWebSocket>(*m_httpsession, request, response);
+            m_ws->setReceiveTimeout(0);
 
-            m_ws = std::make_unique<Poco::Net::WebSocket>(*m_httpsession, request, response);
-
-            m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ReadableNotification>(*this, &session::OnReadable));
-            m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ErrorNotification>(*this, &session::OnError));
-
-        } catch (Poco::Exception&) {
+            m_running = true;
+        }
+        catch (Poco::Exception&)
+        {
             return false;
         }
+
+        m_recvThread = std::thread([this]{ recvThread(); });
+        m_sendThread = std::thread([this]{ sendThread(); });
 
         return true;
     }
@@ -106,9 +112,8 @@ namespace autobahn {
 
     void session::stop(std::exception_ptr abortExc)
     {
-        std::lock_guard<std::mutex> lock(m_wsMutex);
-
-        if (m_ws)
+        bool expected = true;
+        if (m_running.compare_exchange_strong(expected, false))
         {
             // Try to shut down gracefully.
             try
@@ -120,11 +125,25 @@ namespace autobahn {
                 poco_information(m_logger, "connection closed uncleanly");
             }
 
-            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ReadableNotification>(*this, &session::OnReadable));
-            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::ErrorNotification>(*this, &session::OnError));
-            m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
-
             m_ws = nullptr;
+
+            {
+                std::lock_guard<std::mutex> lock(m_sendQueueMutex);
+                m_sendQueue = decltype(m_sendQueue)();
+                // Wake the send thread up, so it terminates.
+                m_sendEvent.notify_one();
+            }
+
+            // Stop the threads.
+            if (m_recvThread.get_id() == std::this_thread::get_id())
+                m_recvThread.detach();
+            else if (m_recvThread.joinable())
+                m_recvThread.join();
+
+            if (m_sendThread.get_id() == std::this_thread::get_id())
+                m_sendThread.detach();
+            else if (m_sendThread.joinable())
+                m_sendThread.join();
 
             std::lock_guard<std::mutex> lockCalls(m_callsMutex);
             std::lock_guard<std::mutex> lockSubs(m_subreqMutex);
@@ -149,8 +168,7 @@ namespace autobahn {
 
     bool session::isConnected() const
     {
-        std::lock_guard<std::mutex> lock(m_wsMutex);
-        return m_ws != nullptr;
+        return m_running;
     }
 
 
@@ -1066,16 +1084,12 @@ namespace autobahn {
         std::stringstream ssout;
         json.stringify(ssout);
         auto sendSize = static_cast<size_t>(ssout.tellp());
-        if (sendSize > BUFFER_SIZE)
-        {
-            throw std::out_of_range("message too large to send");
-        }
 
-        std::vector<char> sendBuffer(sendSize);
-        ssout.read(sendBuffer.data(), sendSize);
+        auto sendBuffer = std::make_shared<std::vector<char>>(sendSize);
+        ssout.read(sendBuffer->data(), sendSize);
 
         // workaround for a poco bug. is fixed since 1.5.4
-        for (char& c : sendBuffer)
+        for (char& c : *sendBuffer)
         {
             switch (c)
             {
@@ -1087,117 +1101,81 @@ namespace autobahn {
             }
         }
 
-        std::lock_guard<std::mutex> lock(m_wsMutex);
         if (m_ws == nullptr)
         {
             throw connection_error("not connected");
         }
 
-        {
-            std::lock_guard<std::mutex> lock2(m_sendQueueMutex);
-            m_sendQueue.push(std::move(sendBuffer));
-        }
-
-        m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
+        std::lock_guard<std::mutex> lock(m_sendQueueMutex);
+        m_sendQueue.push(sendBuffer);
+        m_sendEvent.notify_one();
     }
 
-    void session::OnReadable(const Poco::AutoPtr<Poco::Net::ReadableNotification>& pNf)
+    void session::recvThread()
     {
-        try
+        while (auto ws = m_ws)
         {
-            char recvBuffer[BUFFER_SIZE];
-            int flags;
-            int recvSize;
-
+            try
             {
-                std::lock_guard<std::mutex> lock(m_wsMutex);
-                recvSize = m_ws->receiveFrame(recvBuffer, sizeof(recvBuffer), flags);
-            }
-
-            int frameOp = flags & Poco::Net::WebSocket::FRAME_OP_BITMASK;
-
-            if (recvSize == 0 || frameOp == Poco::Net::WebSocket::FRAME_OP_CLOSE)
-            {
-                auto eptr = std::make_exception_ptr(connection_error("connection closed"));
-                stop(eptr);
-                return;
-            }
-
-            if (frameOp == Poco::Net::WebSocket::FRAME_OP_PING)
-            {
+                int recvSize = ws->receiveMessage(m_recvBuffer);
+                if (recvSize <= 0)
                 {
-                    std::lock_guard<std::mutex> lock(m_pongBufferMutex);
-                    m_pongBuffer.resize(recvSize);
-                    std::copy(recvBuffer, recvBuffer + recvSize, m_pongBuffer.begin());
+                    auto eptr = std::make_exception_ptr(connection_error("connection closed"));
+                    stop(eptr);
+                    break;
                 }
 
-                std::lock_guard<std::mutex> lock(m_wsMutex);
-                m_reactor.addEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
-                return;
+                got_msg(m_recvBuffer.data(), recvSize);
             }
-
-            got_msg(recvBuffer, recvSize);
-        }
-        catch (...)
-        {
-            stop(std::current_exception());
+            catch (...)
+            {
+                stop(std::current_exception());
+            }
         }
     }
 
-    void session::OnWritable(const Poco::AutoPtr<Poco::Net::WritableNotification>& pNf)
+    void session::sendThread()
     {
-        try
+        while (m_running)
         {
-            {
-                std::lock_guard<std::mutex> lock(m_pongBufferMutex);
+            std::unique_lock<std::mutex> lock(m_sendQueueMutex);
+            m_sendEvent.wait(lock);
 
-                if (m_pongBuffer.size())
+            auto ws = m_ws;
+            if (!ws)
+            {
+                break;
+            }
+
+            try
+            {
+                while (m_sendQueue.size())
                 {
-                    std::lock_guard<std::mutex> lock2(m_wsMutex);
-                    int rc = m_ws->sendFrame(m_pongBuffer.data(), m_pongBuffer.size(),
-                        Poco::Net::WebSocket::FRAME_FLAG_FIN | Poco::Net::WebSocket::FRAME_OP_PONG);
-                    if (rc != m_pongBuffer.size())
+                    auto sendBuffer = m_sendQueue.front();
+                    lock.unlock();
+
+                    int bytesSent = ws->sendMessage(sendBuffer->data(), sendBuffer->size());
+                    if (bytesSent <= 0)
                     {
-                        // Incomplete send. Do not remove writable handler.
-                        return;
+                        auto eptr = std::make_exception_ptr(connection_error("connection closed"));
+                        stop(eptr);
+                        break;
                     }
 
-                    m_pongBuffer.clear();
-                }
-            }
-
-            std::lock_guard<std::mutex> lock(m_wsMutex);
-            std::lock_guard<std::mutex> lock2(m_sendQueueMutex);
-
-            while (m_sendQueue.size())
-            {
-                auto& sendBuffer = m_sendQueue.front();
-
-                {
-                    int rc = m_ws->sendFrame(sendBuffer.data(), sendBuffer.size());
-                    if (rc != sendBuffer.size())
+                    lock.lock();
+                    // Queue could have been cleared by another thread.
+                    if (m_sendQueue.size())
                     {
-                        // Incomplete send. Do not remove writable handler.
-                        return;
+                        m_sendQueue.pop();
                     }
                 }
-
-                m_sendQueue.pop();
+            }
+            catch (...)
+            {
+                // Release lock if held to prevent double lock in stop.
+                lock = { };
+                stop(std::current_exception());
             }
         }
-        catch (...)
-        {
-            stop(std::current_exception());
-        }
-
-        std::lock_guard<std::mutex> lock(m_wsMutex);
-
-        m_reactor.removeEventHandler(*m_ws, Poco::NObserver<session, Poco::Net::WritableNotification>(*this, &session::OnWritable));
-    }
-
-    void session::OnError(const Poco::AutoPtr<Poco::Net::ErrorNotification>& pNf)
-    {
-        auto eptr = std::make_exception_ptr(connection_error("socket error"));
-        stop(eptr);
     }
 }

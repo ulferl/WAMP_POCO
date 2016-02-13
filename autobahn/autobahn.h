@@ -32,15 +32,10 @@
 #include <queue>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
 
-#include <Poco/Net/SocketReactor.h>
-#include <Poco/Net/SocketNotification.h>
-#include <Poco/Net/HTTPSClientSession.h>
-#include <Poco/Net/HTTPRequest.h>
-#include <Poco/Net/HTTPResponse.h>
-#include <Poco/Net/WebSocket.h>
+#include <Poco/Net/SocketAddress.h>
 #include <Poco/JSON/Parser.h>
-#include <Poco/JSON/Stringifier.h>
 #include <Poco/Dynamic/Var.h>
 #include <Poco/Logger.h>
 
@@ -50,20 +45,15 @@
 #endif
 
 
-/*! \mainpage Reference Documentation
-*
-* Welcome to the reference documentation of <b>Autobahn</b>|Cpp.<br>
-*
-* For a more gentle introduction, please visit http://autobahn.ws/cpp/.
-*/
+namespace Poco {
+namespace Net {
+class HTTPClientSession;
+}
+}
+class ApplicationWebSocket;
 
 
-/*!
-* Autobahn namespace.
-*/
 namespace autobahn {
-
-    static const size_t BUFFER_SIZE = 16384;
 
     typedef Poco::Dynamic::Var any;
 
@@ -144,7 +134,7 @@ namespace autobahn {
 
     public:
 
-        session(Poco::Net::SocketReactor& reactor);
+        session();
 
         ~session();
 
@@ -161,6 +151,8 @@ namespace autobahn {
         void stop(std::exception_ptr abortExc);
 
         bool isConnected() const;
+
+        uint64_t getSessionId() const { return m_session_id; }
 
         /*!
         * Join a realm with this session.
@@ -400,22 +392,27 @@ namespace autobahn {
         /// Process incoming message.
         void got_msg(char *recvBuffer, int recvSize);
 
-        // Handlers for SocketReactor.
-        void OnReadable(const Poco::AutoPtr<Poco::Net::ReadableNotification>& pNf);
-        void OnWritable(const Poco::AutoPtr<Poco::Net::WritableNotification>& pNf);
-        void OnError(const Poco::AutoPtr<Poco::Net::ErrorNotification>& pNf);
+
+        void recvThread();
+
+        void sendThread();
 
 
         Poco::Logger& m_logger = Poco::Logger::get("autobahn");
-        Poco::Net::SocketReactor& m_reactor;
+
+        std::atomic<bool> m_running;
 
         std::unique_ptr<Poco::Net::HTTPClientSession> m_httpsession;
-        std::unique_ptr<Poco::Net::WebSocket> m_ws;
+        std::shared_ptr<ApplicationWebSocket> m_ws;
 
-        mutable std::mutex m_wsMutex;
+        std::thread m_recvThread;
+        std::thread m_sendThread;
+
+        std::vector<char> m_recvBuffer;
 
         std::mutex m_sendQueueMutex;
-        std::queue<std::vector<char>> m_sendQueue;
+        std::condition_variable m_sendEvent;
+        std::queue<std::shared_ptr<std::vector<char>>> m_sendQueue;
 
         Poco::JSON::Parser m_parser;
 
@@ -435,10 +432,6 @@ namespace autobahn {
 
         /// Authentication information sent on welcome
         authinfo m_authinfo;
-
-        /// Data containing body of ping message for sending pong.
-        std::mutex m_pongBufferMutex;
-        std::vector<char> m_pongBuffer;
 
 
         bool m_goodbye_sent = false;
