@@ -405,6 +405,12 @@ void session::publish(const std::string& topic, const anyvec& args, const anymap
 
 std::future<any> session::call(const std::string& procedure)
 {
+    return call_options(procedure, {});
+}
+
+
+std::future<any> session::call_options(const std::string& procedure, const anymap& options)
+{
 
     if (!m_session_id)
     {
@@ -421,7 +427,7 @@ std::future<any> session::call(const std::string& procedure)
     Poco::JSON::Array json;
     json.add(static_cast<int>(msg_code::CALL));
     json.add(m_request_id);
-    json.add(Poco::JSON::Object());
+    json.add(DynToJSON(options));
     json.add(procedure);
     send(json);
 
@@ -430,6 +436,12 @@ std::future<any> session::call(const std::string& procedure)
 
 
 std::future<any> session::call(const std::string& procedure, const anyvec& args)
+{
+    return call_options(procedure, args, {});
+}
+
+
+std::future<any> session::call_options(const std::string& procedure, const anyvec& args, const anymap& options)
 {
 
     if (!m_session_id)
@@ -450,7 +462,7 @@ std::future<any> session::call(const std::string& procedure, const anyvec& args)
         Poco::JSON::Array json;
         json.add(static_cast<int>(msg_code::CALL));
         json.add(m_request_id);
-        json.add(Poco::JSON::Object());
+        json.add(DynToJSON(options));
         json.add(procedure);
         json.add(DynToJSON(args));
         send(json);
@@ -467,7 +479,13 @@ std::future<any> session::call(const std::string& procedure, const anyvec& args)
 
 std::future<any> session::call(const std::string& procedure, const anyvec& args, const anymap& kwargs)
 {
+    return call_options(procedure, args, kwargs, {});
+}
 
+
+std::future<any> session::call_options(const std::string& procedure, const anyvec& args, const anymap& kwargs,
+                                       const anymap& options)
+{
     if (!m_session_id)
     {
         throw no_session_error();
@@ -486,7 +504,7 @@ std::future<any> session::call(const std::string& procedure, const anyvec& args,
         Poco::JSON::Array json;
         json.add(static_cast<int>(msg_code::CALL));
         json.add(m_request_id);
-        json.add(Poco::JSON::Object());
+        json.add(DynToJSON(options));
         json.add(procedure);
         json.add(DynToJSON(args));
         json.add(DynToJSON(kwargs));

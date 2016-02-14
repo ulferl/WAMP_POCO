@@ -224,6 +224,8 @@ public:
     */
     std::future<any> call(const std::string& procedure);
 
+    std::future<any> call_options(const std::string& procedure, const anymap& options);
+
     /*!
     * Calls a remote procedure with positional arguments.
     *
@@ -232,6 +234,8 @@ public:
     * \return A future that resolves to the result of the remote procedure call.
     */
     std::future<any> call(const std::string& procedure, const anyvec& args);
+
+    std::future<any> call_options(const std::string& procedure, const anyvec& args, const anymap& options);
 
     /*!
     * Calls a remote procedure with positional and keyword arguments.
@@ -242,6 +246,9 @@ public:
     * \return A future that resolves to the result of the remote procedure call.
     */
     std::future<any> call(const std::string& procedure, const anyvec& args, const anymap& kwargs);
+
+    std::future<any> call_options(const std::string& procedure, const anyvec& args, const anymap& kwargs,
+                                  const anymap& options);
 
 
     /*!
