@@ -601,7 +601,13 @@ void session::process_error(const wamp_msg_t& msg)
     // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri, Arguments|list]
     // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri, Arguments|list, ArgumentsKw|dict]
 
-    auto eptr = std::make_exception_ptr(server_error(msg[4].toString()));
+    std::string errorMsg = msg[4].toString();
+    if (msg.size() > 5)
+    {
+        errorMsg += ": " + msg[5].toString();
+    }
+
+    auto eptr = std::make_exception_ptr(server_error(errorMsg));
 
     switch (static_cast<msg_code>(static_cast<int>(msg[1])))
     {
