@@ -16,8 +16,8 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#include "ApplicationWebSocket.h"
 #include "autobahn.h"
+#include "ApplicationWebSocket.h"
 
 #include "util/Continuation.h"
 #include "util/SHA256Engine.h"
@@ -60,7 +60,6 @@ static Poco::JSON::Object DynToJSON(const Poco::DynamicStruct& dynamic)
 
 namespace autobahn
 {
-
 session::session()
 {
     m_running = false;
@@ -177,7 +176,6 @@ bool session::isConnected() const
 std::future<uint64_t> session::join(const std::string& realm, const std::string& method, const std::string& authid,
                                     const std::string& signature)
 {
-
     // [HELLO, Realm|uri, Details|dict]
 
     Poco::JSON::Array json;
@@ -220,7 +218,6 @@ authinfo session::getAuthInfo() const
 
 std::future<subscription> session::subscribe(const std::string& topic, handler_t handler, const anymap& options)
 {
-
     // [SUBSCRIBE, Request|id, Options|dict, Topic|uri]
 
     if (!m_session_id)
@@ -295,7 +292,6 @@ std::future<registration> session::provide_fvm(const std::string& procedure, end
 template <typename E>
 std::future<registration> session::_provide(const std::string& procedure, E endpoint)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -321,7 +317,6 @@ std::future<registration> session::_provide(const std::string& procedure, E endp
 
 void session::publish(const std::string& topic)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -342,7 +337,6 @@ void session::publish(const std::string& topic)
 
 void session::publish(const std::string& topic, const anyvec& args)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -350,7 +344,6 @@ void session::publish(const std::string& topic, const anyvec& args)
 
     if (args.size() > 0)
     {
-
         m_request_id += 1;
 
         // [PUBLISH, Request|id, Options|dict, Topic|uri, Arguments|list]
@@ -365,7 +358,6 @@ void session::publish(const std::string& topic, const anyvec& args)
     }
     else
     {
-
         publish(topic);
     }
 }
@@ -373,7 +365,6 @@ void session::publish(const std::string& topic, const anyvec& args)
 
 void session::publish(const std::string& topic, const anyvec& args, const anymap& kwargs)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -381,7 +372,6 @@ void session::publish(const std::string& topic, const anyvec& args, const anymap
 
     if (kwargs.size() > 0)
     {
-
         m_request_id += 1;
 
         // [PUBLISH, Request|id, Options|dict, Topic|uri, Arguments|list, ArgumentsKw|dict]
@@ -397,7 +387,6 @@ void session::publish(const std::string& topic, const anyvec& args, const anymap
     }
     else
     {
-
         publish(topic, args);
     }
 }
@@ -411,7 +400,6 @@ std::future<any> session::call(const std::string& procedure)
 
 std::future<any> session::call_options(const std::string& procedure, const anymap& options)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -443,7 +431,6 @@ std::future<any> session::call(const std::string& procedure, const anyvec& args)
 
 std::future<any> session::call_options(const std::string& procedure, const anyvec& args, const anymap& options)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -451,7 +438,6 @@ std::future<any> session::call_options(const std::string& procedure, const anyve
 
     if (args.size() > 0)
     {
-
         std::lock_guard<std::mutex> lock(m_callsMutex);
 
         m_request_id += 1;
@@ -471,7 +457,6 @@ std::future<any> session::call_options(const std::string& procedure, const anyve
     }
     else
     {
-
         return call(procedure);
     }
 }
@@ -493,7 +478,6 @@ std::future<any> session::call_options(const std::string& procedure, const anyve
 
     if (kwargs.size() > 0)
     {
-
         std::lock_guard<std::mutex> lock(m_callsMutex);
 
         m_request_id += 1;
@@ -521,7 +505,6 @@ std::future<any> session::call_options(const std::string& procedure, const anyve
 
 void session::process_welcome(const wamp_msg_t& msg)
 {
-
     // [WELCOME, Session|id, Details|dict]
 
     m_session_id = msg[1];
@@ -544,7 +527,6 @@ void session::process_welcome(const wamp_msg_t& msg)
 
 void session::process_abort(const wamp_msg_t& msg)
 {
-
     // [ABORT, Details|dict, Reason|uri]
 
     std::lock_guard<std::mutex> lock(m_joinMutex);
@@ -614,7 +596,6 @@ void session::process_challenge(const wamp_msg_t& msg)
 
 void session::process_error(const wamp_msg_t& msg)
 {
-
     // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri]
     // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri, Arguments|list]
     // [ERROR, REQUEST.Type|int, REQUEST.Request|id, Details|dict, Error|uri, Arguments|list, ArgumentsKw|dict]
@@ -671,7 +652,6 @@ void session::process_error(const wamp_msg_t& msg)
 
 void session::process_goodbye(const wamp_msg_t& msg)
 {
-
     /*
     if (!m_session_id) {
     throw protocol_error("GOODBYE received an no session established");
@@ -681,7 +661,6 @@ void session::process_goodbye(const wamp_msg_t& msg)
 
     if (!m_goodbye_sent)
     {
-
         // if we did not initiate closing, reply ..
 
         // [GOODBYE, Details|dict, Reason|uri]
@@ -704,7 +683,6 @@ void session::process_goodbye(const wamp_msg_t& msg)
 
 std::future<std::string> session::leave(const std::string& reason)
 {
-
     if (!m_session_id)
     {
         throw no_session_error();
@@ -728,7 +706,6 @@ std::future<std::string> session::leave(const std::string& reason)
 
 void session::process_invocation(const wamp_msg_t& msg)
 {
-
     // [INVOCATION, Request|id, REGISTERED.Registration|id, Details|dict]
     // [INVOCATION, Request|id, REGISTERED.Registration|id, Details|dict, CALL.Arguments|list]
     // [INVOCATION, Request|id, REGISTERED.Registration|id, Details|dict, CALL.Arguments|list, CALL.ArgumentsKw|dict]
@@ -753,7 +730,6 @@ void session::process_invocation(const wamp_msg_t& msg)
 
     if (endpoint != m_endpoints.end())
     {
-
         /*if (msg[3].type != msgpack::type::MAP) {
         throw protocol_error("invalid INVOCATION message structure - Details must be a dictionary");
         }*/
@@ -763,7 +739,6 @@ void session::process_invocation(const wamp_msg_t& msg)
 
         if (msg.size() > 4)
         {
-
             /*if (msg[4].type != msgpack::type::ARRAY) {
             throw protocol_error("invalid INVOCATION message structure - INVOCATION.Arguments must be a list");
             }*/
@@ -781,10 +756,8 @@ void session::process_invocation(const wamp_msg_t& msg)
         // [YIELD, INVOCATION.Request|id, Options|dict, Arguments|list, ArgumentsKw|dict]
         try
         {
-
             if ((endpoint->second).type() == typeid(endpoint_t))
             {
-
                 poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_t",
                               registration_id);
 
@@ -801,7 +774,6 @@ void session::process_invocation(const wamp_msg_t& msg)
             }
             else if ((endpoint->second).type() == typeid(endpoint_v_t))
             {
-
                 poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_v_t",
                               registration_id);
 
@@ -816,7 +788,6 @@ void session::process_invocation(const wamp_msg_t& msg)
             }
             else if ((endpoint->second).type() == typeid(endpoint_fvm_t))
             {
-
                 poco_trace_f1(m_logger, "Invoking endpoint registered under %?i as of type endpoint_fvm_t",
                               registration_id);
 
@@ -858,7 +829,6 @@ void session::process_invocation(const wamp_msg_t& msg)
 
 void session::process_call_result(const wamp_msg_t& msg)
 {
-
     // [RESULT, CALL.Request|id, Details|dict]
     // [RESULT, CALL.Request|id, Details|dict, YIELD.Arguments|list]
     // [RESULT, CALL.Request|id, Details|dict, YIELD.Arguments|list, YIELD.ArgumentsKw|dict]
@@ -881,14 +851,12 @@ void session::process_call_result(const wamp_msg_t& msg)
 
     if (call != m_calls.end())
     {
-
         /*if (msg[2].type != msgpack::type::MAP) {
         throw protocol_error("invalid RESULT message structure - Details must be a dictionary");
         }*/
 
         if (msg.size() > 3)
         {
-
             /*if (msg[3].type != msgpack::type::ARRAY) {
             throw protocol_error("invalid RESULT message structure - YIELD.Arguments must be a list");
             }*/
@@ -921,7 +889,6 @@ void session::process_call_result(const wamp_msg_t& msg)
 
 void session::process_subscribed(const wamp_msg_t& msg)
 {
-
     // [SUBSCRIBED, SUBSCRIBE.Request|id, Subscription|id]
 
     if (msg.size() != 3)
@@ -942,7 +909,6 @@ void session::process_subscribed(const wamp_msg_t& msg)
 
     if (subscribe_request != m_subscribe_requests.end())
     {
-
         if (!msg[2].isInteger())
         {
             throw protocol_error("invalid SUBSCRIBED message structure - SUBSCRIBED.Subscription must be an integer");
@@ -965,7 +931,6 @@ void session::process_subscribed(const wamp_msg_t& msg)
 
 void session::process_event(const wamp_msg_t& msg)
 {
-
     // [EVENT, SUBSCRIBED.Subscription|id, PUBLISHED.Publication|id, Details|dict]
     // [EVENT, SUBSCRIBED.Subscription|id, PUBLISHED.Publication|id, Details|dict, PUBLISH.Arguments|list]
     // [EVENT, SUBSCRIBED.Subscription|id, PUBLISHED.Publication|id, Details|dict, PUBLISH.Arguments|list,
@@ -987,7 +952,6 @@ void session::process_event(const wamp_msg_t& msg)
 
     if (handler != m_handlers.end())
     {
-
         if (!msg[2].isInteger())
         {
             throw protocol_error("invalid EVENT message structure - PUBLISHED.Publication|id must be an integer");
@@ -1004,7 +968,6 @@ void session::process_event(const wamp_msg_t& msg)
 
         if (msg.size() > 4)
         {
-
             /*if (msg[4].type != msgpack::type::ARRAY) {
             throw protocol_error("invalid EVENT message structure - EVENT.Arguments must be a list");
             }*/
@@ -1013,7 +976,6 @@ void session::process_event(const wamp_msg_t& msg)
 
             if (msg.size() > 5)
             {
-
                 /*if (msg[5].type != msgpack::type::MAP) {
                 throw protocol_error("invalid EVENT message structure - EVENT.Arguments must be a list");
                 }*/
@@ -1024,7 +986,6 @@ void session::process_event(const wamp_msg_t& msg)
 
         try
         {
-
             // now trigger the user supplied event handler ..
             //
             (handler->second)(args, kwargs);
@@ -1046,7 +1007,6 @@ void session::process_event(const wamp_msg_t& msg)
 
 void session::process_registered(const wamp_msg_t& msg)
 {
-
     // [REGISTERED, REGISTER.Request|id, Registration|id]
 
     if (msg.size() != 3)
@@ -1067,7 +1027,6 @@ void session::process_registered(const wamp_msg_t& msg)
 
     if (register_request != m_register_requests.end())
     {
-
         if (!msg[2].isInteger())
         {
             throw protocol_error("invalid REGISTERED message structure - REGISTERED.Registration must be an integer");
