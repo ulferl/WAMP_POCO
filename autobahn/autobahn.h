@@ -127,6 +127,36 @@ struct authinfo
     std::string authrole;
 };
 
+struct publish_options
+{
+    bool acknowledge = false;
+    bool exclude_me = false;
+    std::vector<int> exclude;
+    std::vector<int> eligible;
+    bool disclose_me = false;
+
+    Poco::JSON::Object toDict() const
+    {
+        Poco::JSON::Object obj;
+
+        if (acknowledge)
+            obj.set("acknowledge", acknowledge);
+
+        if (exclude_me)
+            obj.set("exclude_me", exclude_me);
+
+        if (exclude.size() > 0)
+            obj.set("exclude", exclude);
+
+        if (eligible.size() > 0)
+            obj.set("eligible", eligible);
+
+        if (disclose_me)
+            obj.set("disclose_me", disclose_me);
+
+        return obj;
+    }
+};
 
 /*!
 * A WAMP session.
@@ -181,28 +211,13 @@ public:
 
 
     /*!
-    * Publish an event with empty payload to a topic.
-    *
-    * \param topic The URI of the topic to publish to.
-    */
-    void publish(const std::string& topic);
-
-    /*!
-    * Publish an event with positional payload to a topic.
-    *
-    * \param topic The URI of the topic to publish to.
-    * \param args The positional payload for the event.
-    */
-    void publish(const std::string& topic, const anyvec& args);
-
-    /*!
     * Publish an event with both positional and keyword payload to a topic.
     *
     * \param topic The URI of the topic to publish to.
     * \param args The positional payload for the event.
     * \param kwargs The keyword payload for the event.
     */
-    void publish(const std::string& topic, const anyvec& args, const anymap& kwargs);
+    void publish(const std::string& topic, const anyvec& args = {}, const anymap& kwargs = {}, const publish_options& options = publish_options());
 
 
     /*!

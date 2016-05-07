@@ -314,81 +314,27 @@ std::future<registration> session::_provide(const std::string& procedure, E endp
     return m_register_requests[m_request_id].m_res.get_future();
 }
 
-
-void session::publish(const std::string& topic)
+void session::publish(const std::string& topic, const anyvec& args, const anymap& kwargs, const publish_options& options)
 {
+    // [PUBLISH, Request|id, Options|dict, Topic|uri, Arguments|list, ArgumentsKw|dict]
+
     if (!m_session_id)
-    {
         throw no_session_error();
-    }
-
-    m_request_id += 1;
-
-    // [PUBLISH, Request|id, Options|dict, Topic|uri]
 
     Poco::JSON::Array json;
     json.add(static_cast<int>(msg_code::PUBLISH));
     json.add(m_request_id);
-    json.add(Poco::JSON::Object());
+    json.add(options.toDict());
     json.add(topic);
-    send(json);
-}
-
-
-void session::publish(const std::string& topic, const anyvec& args)
-{
-    if (!m_session_id)
-    {
-        throw no_session_error();
-    }
 
     if (args.size() > 0)
-    {
-        m_request_id += 1;
-
-        // [PUBLISH, Request|id, Options|dict, Topic|uri, Arguments|list]
-
-        Poco::JSON::Array json;
-        json.add(static_cast<int>(msg_code::PUBLISH));
-        json.add(m_request_id);
-        json.add(Poco::JSON::Object());
-        json.add(topic);
         json.add(DynToJSON(args));
-        send(json);
-    }
-    else
-    {
-        publish(topic);
-    }
-}
-
-
-void session::publish(const std::string& topic, const anyvec& args, const anymap& kwargs)
-{
-    if (!m_session_id)
-    {
-        throw no_session_error();
-    }
 
     if (kwargs.size() > 0)
-    {
-        m_request_id += 1;
-
-        // [PUBLISH, Request|id, Options|dict, Topic|uri, Arguments|list, ArgumentsKw|dict]
-
-        Poco::JSON::Array json;
-        json.add(static_cast<int>(msg_code::PUBLISH));
-        json.add(m_request_id);
-        json.add(Poco::JSON::Object());
-        json.add(topic);
-        json.add(DynToJSON(args));
         json.add(DynToJSON(kwargs));
-        send(json);
-    }
-    else
-    {
-        publish(topic, args);
-    }
+
+    m_request_id += 1;
+    send(json);
 }
 
 
@@ -1164,7 +1110,7 @@ void session::got_msg(char* recvBuffer, int recvSize)
 void session::send(const Poco::JSON::Array& json)
 {
     std::stringstream ssout;
-    json.stringify(ssout);
+    json.stringify(ssout); // TODO: Might throw if content is not serializable
     auto sendSize = static_cast<size_t>(ssout.tellp());
 
     auto sendBuffer = std::make_shared<std::vector<char>>(sendSize);
