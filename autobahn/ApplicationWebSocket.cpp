@@ -1,4 +1,4 @@
-#include "replay/backend/ApplicationWebSocket.h"
+#include "ApplicationWebSocket.h"
 
 
 ApplicationWebSocket::ApplicationWebSocket(Poco::Net::HTTPClientSession& session, Poco::Net::HTTPRequest& request, Poco::Net::HTTPResponse& response)

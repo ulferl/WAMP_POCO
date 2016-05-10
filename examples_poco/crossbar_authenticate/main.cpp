@@ -5,10 +5,10 @@
 
 int main()
 {
-    Poco::Net::initializeSSL();
+    Poco::Net::initializeNetwork();
     Poco::Logger::get("autobahn").setChannel(new Poco::ConsoleChannel());
     Poco::Net::SocketReactor reactor;
-    autobahn::session ws(reactor);
+    autobahn::session ws;
 
     std::thread th([&]{ reactor.run(); });
 
