@@ -3,16 +3,15 @@
 #include "Poco/Net/SocketReactor.h"
 #include <iostream>
 
+
 int main()
 {
     Poco::Net::initializeNetwork();
     Poco::Logger::get("autobahn").setChannel(new Poco::ConsoleChannel());
-    Poco::Net::SocketReactor reactor;
     autobahn::session ws;
 
-    std::thread th([&]{ reactor.run(); });
-
-    try {
+    try
+    {
         if (!ws.start(Poco::Net::SocketAddress("localhost", 8080)))
         {
             throw std::runtime_error("could not start");
@@ -33,6 +32,4 @@ int main()
     }
 
     std::cin.ignore();
-    reactor.stop();
-    th.join();
 }
