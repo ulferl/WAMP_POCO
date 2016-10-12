@@ -21,7 +21,7 @@
 
 #include "util/Continuation.h"
 #include "util/SHA256Engine.h"
-// #include "util/make_unique.h"
+#include "util/make_unique.h"
 
 #include <Poco/Base64Encoder.h>
 #include <Poco/HMACEngine.h>

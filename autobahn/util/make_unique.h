@@ -1,7 +1,8 @@
 #ifndef MAKE_UNIQUE_H
 #define MAKE_UNIQUE_H
 
-#ifndef _MSC_VER
+#if (!defined(_MSC_VER) && __cplusplus < 201402L)
+
 #include <cstddef>
 #include <memory>
 #include <type_traits>
@@ -37,5 +38,7 @@ namespace std {
         typename _Unique_if<T>::_Known_bound
         make_unique(Args&&...) = delete;
 }
+
 #endif
+
 #endif
