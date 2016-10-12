@@ -21,7 +21,7 @@
 
 #include "util/Continuation.h"
 #include "util/SHA256Engine.h"
-#include "util/make_unique.h"
+// #include "util/make_unique.h"
 
 #include <Poco/Base64Encoder.h>
 #include <Poco/HMACEngine.h>
@@ -173,7 +173,7 @@ bool session::isConnected() const
 }
 
 
-std::future<uint64_t> session::join(const std::string& realm, const std::string& method, const std::string& authid,
+std::future<WampId> session::join(const std::string& realm, const std::string& method, const std::string& authid,
                                     const std::string& signature)
 {
     // [HELLO, Realm|uri, Details|dict]
@@ -665,12 +665,12 @@ void session::process_invocation(const wamp_msg_t& msg)
     /*if (msg[1].type != msgpack::type::POSITIVE_INTEGER) {
     throw protocol_error("invalid INVOCATION message structure - INVOCATION.Request must be an integer");
     }*/
-    uint64_t request_id = msg[1];
+    WampId request_id = msg[1];
 
     /*if (msg[2].type != msgpack::type::POSITIVE_INTEGER) {
     throw protocol_error("invalid INVOCATION message structure - INVOCATION.Registration must be an integer");
     }*/
-    uint64_t registration_id = msg[2];
+    WampId registration_id = msg[2];
 
     endpoints_t::iterator endpoint = m_endpoints.find(registration_id);
 
@@ -789,7 +789,7 @@ void session::process_call_result(const wamp_msg_t& msg)
         throw protocol_error("invalid RESULT message structure - CALL.Request must be an integer");
     }
 
-    uint64_t request_id = msg[1];
+    WampId request_id = msg[1];
 
     std::lock_guard<std::mutex> lock(m_callsMutex);
 
@@ -847,7 +847,7 @@ void session::process_subscribed(const wamp_msg_t& msg)
         throw protocol_error("invalid SUBSCRIBED message structure - SUBSCRIBED.Request must be an integer");
     }
 
-    uint64_t request_id = msg[1];
+    WampId request_id = msg[1];
 
     std::lock_guard<std::mutex> lock(m_subreqMutex);
 
@@ -860,7 +860,7 @@ void session::process_subscribed(const wamp_msg_t& msg)
             throw protocol_error("invalid SUBSCRIBED message structure - SUBSCRIBED.Subscription must be an integer");
         }
 
-        uint64_t subscription_id = msg[2];
+        WampId subscription_id = msg[2];
 
         m_handlers[subscription_id] = subscribe_request->second.m_handler;
 
@@ -892,7 +892,7 @@ void session::process_event(const wamp_msg_t& msg)
         throw protocol_error("invalid EVENT message structure - SUBSCRIBED.Subscription must be an integer");
     }
 
-    uint64_t subscription_id = msg[1];
+    WampId subscription_id = msg[1];
 
     handlers_t::iterator handler = m_handlers.find(subscription_id);
 
@@ -903,7 +903,7 @@ void session::process_event(const wamp_msg_t& msg)
             throw protocol_error("invalid EVENT message structure - PUBLISHED.Publication|id must be an integer");
         }
 
-        // uint64_t publication_id = msg[2].as<uint64_t>();
+        // WampId publication_id = msg[2].as<WampId>();
 
         /*if (msg[3].type != msgpack::type::MAP) {
         throw protocol_error("invalid EVENT message structure - Details must be a dictionary");
@@ -965,7 +965,7 @@ void session::process_registered(const wamp_msg_t& msg)
         throw protocol_error("invalid REGISTERED message structure - REGISTERED.Request must be an integer");
     }
 
-    uint64_t request_id = msg[1];
+    WampId request_id = msg[1];
 
     std::lock_guard<std::mutex> lock(m_regreqMutex);
 
@@ -978,7 +978,7 @@ void session::process_registered(const wamp_msg_t& msg)
             throw protocol_error("invalid REGISTERED message structure - REGISTERED.Registration must be an integer");
         }
 
-        uint64_t registration_id = msg[2];
+        WampId registration_id = msg[2];
 
         m_endpoints[registration_id] = register_request->second.m_endpoint;
 

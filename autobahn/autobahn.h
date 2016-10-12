@@ -54,6 +54,8 @@ namespace autobahn
 
 typedef Poco::Dynamic::Var any;
 
+/// workaround https://github.com/pocoproject/poco/issues/800
+typedef Poco::UInt64 WampId;
 /// A map holding any values and string keys.
 typedef Poco::DynamicStruct anymap;
 
@@ -98,24 +100,24 @@ typedef std::function<std::future<anyvecmap>(const anyvec&, const anymap&)> endp
 struct registration
 {
     registration() : id(0){};
-    registration(uint64_t id) : id(id){};
-    uint64_t id;
+    registration(WampId id) : id(id){};
+    WampId id;
 };
 
 /// Represents a topic subscription.
 struct subscription
 {
     subscription() : id(0){};
-    subscription(uint64_t id) : id(id){};
-    uint64_t id;
+    subscription(WampId id) : id(id){};
+    WampId id;
 };
 
 /// Represents an event publication (for acknowledged publications).
 struct publication
 {
     publication() : id(0){};
-    publication(uint64_t id) : id(id){};
-    uint64_t id;
+    publication(WampId id) : id(id){};
+    WampId id;
 };
 
 /// Represents the authentication information sent on welcome
@@ -183,7 +185,7 @@ public:
 
     bool isConnected() const;
 
-    uint64_t getSessionId() const { return m_session_id; }
+    WampId getSessionId() const { return m_session_id; }
 
     /*!
     * Join a realm with this session.
@@ -195,7 +197,7 @@ public:
     * passphrase.
     * \return A future that resolves with the session ID when the realm was joined.
     */
-    std::future<uint64_t> join(const std::string& realm, const std::string& method = "", const std::string& authid = "",
+    std::future<WampId> join(const std::string& realm, const std::string& method = "", const std::string& authid = "",
                                const std::string& signature = "");
 
     /*!
@@ -306,7 +308,7 @@ private:
     };
 
     /// Map of outstanding WAMP calls (request ID -> call).
-    typedef std::map<uint64_t, call_t> calls_t;
+    typedef std::map<WampId, call_t> calls_t;
 
     /// Map of WAMP call ID -> call
     calls_t m_calls;
@@ -328,7 +330,7 @@ private:
     };
 
     /// Map of outstanding WAMP subscribe requests (request ID -> subscribe request).
-    typedef std::map<uint64_t, subscribe_request_t> subscribe_requests_t;
+    typedef std::map<WampId, subscribe_request_t> subscribe_requests_t;
 
     /// Map of WAMP subscribe request ID -> subscribe request
     subscribe_requests_t m_subscribe_requests;
@@ -336,7 +338,7 @@ private:
     std::mutex m_subreqMutex;
 
     /// Map of subscribed handlers (subscription ID -> handler)
-    typedef std::map<uint64_t, handler_t> handlers_t;
+    typedef std::map<WampId, handler_t> handlers_t;
 
     /// Map of WAMP subscription ID -> handler
     handlers_t m_handlers;
@@ -358,7 +360,7 @@ private:
     };
 
     /// Map of outstanding WAMP register requests (request ID -> register request).
-    typedef std::map<uint64_t, register_request_t> register_requests_t;
+    typedef std::map<WampId, register_request_t> register_requests_t;
 
     /// Map of WAMP register request ID -> register request
     register_requests_t m_register_requests;
@@ -366,7 +368,7 @@ private:
     std::mutex m_regreqMutex;
 
     /// Map of registered endpoints (registration ID -> endpoint)
-    typedef std::map<uint64_t, any> endpoints_t;
+    typedef std::map<WampId, any> endpoints_t;
 
     /// Map of WAMP registration ID -> endpoint
     endpoints_t m_endpoints;
@@ -438,15 +440,15 @@ private:
     Poco::JSON::Parser m_parser;
 
     /// WAMP session ID (if the session is joined to a realm).
-    uint64_t m_session_id = 0;
+    WampId m_session_id = 0;
 
     /// Future to be fired when session was joined.
-    std::promise<uint64_t> m_session_join;
+    std::promise<WampId> m_session_join;
 
     std::mutex m_joinMutex;
 
     /// Last request ID of outgoing WAMP requests.
-    uint64_t m_request_id = 0;
+    WampId m_request_id = 0;
 
     /// Signature to be used to authenticate
     std::string m_signature;
