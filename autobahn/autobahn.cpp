@@ -1167,7 +1167,8 @@ void session::sendThread()
     while (m_running)
     {
         std::unique_lock<std::mutex> lock(m_sendQueueMutex);
-        m_sendEvent.wait(lock);
+        if(!m_sendQueue.size())
+            m_sendEvent.wait(lock);
 
         auto ws = m_ws;
         if (!ws)
