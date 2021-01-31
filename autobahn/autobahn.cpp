@@ -149,6 +149,7 @@ void session::stop(std::exception_ptr abortExc)
         std::lock_guard<std::mutex> lockCalls(m_callsMutex);
         std::lock_guard<std::mutex> lockSubs(m_subreqMutex);
         std::lock_guard<std::mutex> lockRegs(m_regreqMutex);
+        std::lock_guard<std::mutex> lockUnregs(m_unregreqMutex);
 
         // Abort all pending requests.
         for (auto& call : m_calls)
@@ -160,9 +161,13 @@ void session::stop(std::exception_ptr abortExc)
         for (auto& reg_req : m_register_requests)
             reg_req.second.m_res.set_exception(abortExc);
 
+        for (auto& unreg_req : m_unregister_requests)
+            unreg_req.second.m_res.set_exception(abortExc);
+
         m_calls.clear();
         m_subscribe_requests.clear();
         m_register_requests.clear();
+        m_unregister_requests.clear();
     }
 }
 
@@ -288,6 +293,28 @@ std::future<registration> session::provide_fvm(const std::string& procedure, end
     return _provide(procedure, static_cast<endpoint_fvm_t>(endpoint));
 }
 
+std::future<void> session::unprovide(const registration& reg)
+{
+    if (!m_session_id)
+    {
+        throw no_session_error();
+    }
+
+    std::lock_guard<std::mutex> lock(m_unregreqMutex);
+
+    m_request_id += 1;
+    m_unregister_requests.insert(std::make_pair(m_request_id, unregister_request_t(reg)));
+
+    // [UNREGISTER, Request|id, Registration|id]
+
+    Poco::JSON::Array json;
+    json.add(static_cast<int>(msg_code::UNREGISTER));
+    json.add(m_request_id);
+    json.add(reg.id);
+    send(json);
+
+    return m_unregister_requests[m_request_id].m_res.get_future();
+}
 
 template <typename E>
 std::future<registration> session::_provide(const std::string& procedure, E endpoint)
@@ -564,6 +591,17 @@ void session::process_error(const wamp_msg_t& msg)
         {
             register_request->second.m_res.set_exception(eptr);
             m_register_requests.erase(register_request);
+        }
+    }
+    break;
+    case msg_code::UNREGISTER:
+    {
+        std::lock_guard<std::mutex> lock(m_unregreqMutex);
+        auto unregister_request = m_unregister_requests.find(msg[2]);
+        if (unregister_request != m_unregister_requests.end())
+        {
+            unregister_request->second.m_res.set_exception(eptr);
+            m_unregister_requests.erase(unregister_request);
         }
     }
     break;
@@ -993,6 +1031,38 @@ void session::process_registered(const wamp_msg_t& msg)
 }
 
 
+void session::process_unregistered(const wamp_msg_t& msg)
+{
+    // [UNREGISTERED, UNREGISTER.Request|id]
+    if (msg.size() != 2)
+    {
+        throw protocol_error("invalid UNREGISTERED message structure - length must be 2");
+    }
+
+    if (!msg[1].isInteger())
+    {
+        throw protocol_error("invalid REGISTERED message structure - UNREGISTERED.Request must be an integer");
+    }
+
+    WampId request_id = msg[1];
+
+    std::lock_guard<std::mutex> lock(m_unregreqMutex);
+
+    unregister_requests_t::iterator unregister_request = m_unregister_requests.find(request_id);
+
+    if (unregister_request != m_unregister_requests.end())
+    {
+        std::lock_guard<std::mutex> reglock(m_regreqMutex);
+        WampId registration_id = unregister_request->second.m_registration.id;
+        m_endpoints.erase(registration_id);
+        unregister_request->second.m_res.set_value();
+        m_unregister_requests.erase(unregister_request);
+    } else {
+        throw protocol_error("UNREGISTERED - no pending request ID");
+    }
+}
+
+
 void session::got_msg(char* recvBuffer, int recvSize)
 {
     m_parser.reset();
@@ -1091,7 +1161,7 @@ void session::got_msg(char* recvBuffer, int recvSize)
         throw protocol_error("received UNREGISTER message unexpected for WAMP client roles");
 
     case msg_code::UNREGISTERED:
-        // FIXME
+        process_unregistered(msg);
         break;
 
     case msg_code::INVOCATION:

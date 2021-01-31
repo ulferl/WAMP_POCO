@@ -291,6 +291,14 @@ public:
 
     std::future<registration> provide_fvm(const std::string& procedure, endpoint_fvm_t endpoint);
 
+    /*!
+    * Unregister an endpoint as a procedure that can be called remotely.
+    *
+    * \param registration A registration that was return in a previous provide call.
+    * \return A future that resolves to a void.
+    */
+    std::future<void> unprovide(const registration& reg);
+
 private:
     template <typename E>
     std::future<registration> _provide(const std::string& procedure, E endpoint);
@@ -373,6 +381,24 @@ private:
     /// Map of WAMP registration ID -> endpoint
     endpoints_t m_endpoints;
 
+    /// An outstanding WAMP unregister request.
+    struct unregister_request_t
+    {
+        unregister_request_t(){};
+        unregister_request_t(unregister_request_t&& r) : m_registration(std::move(r.m_registration)), m_res(std::move(r.m_res)) {}
+        unregister_request_t(registration endpoint) : m_registration(endpoint){};
+        registration m_registration;
+        std::promise<void> m_res;
+    };
+
+    /// Map of outstanding WAMP unregister requests (request ID -> register request).
+    typedef std::map<WampId, unregister_request_t> unregister_requests_t;
+
+    /// Map of WAMP register request ID -> register request
+    unregister_requests_t m_unregister_requests;
+
+    std::mutex m_unregreqMutex;
+
 
     /// An unserialized, raw WAMP message.
     typedef Poco::Dynamic::Array wamp_msg_t;
@@ -401,6 +427,9 @@ private:
 
     /// Process a WAMP REGISTERED message.
     void process_registered(const wamp_msg_t& msg);
+
+    /// Process a WAMP UNREGISTERED message.
+    void process_unregistered(const wamp_msg_t& msg);
 
     /// Process a WAMP INVOCATION message.
     void process_invocation(const wamp_msg_t& msg);
